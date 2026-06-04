@@ -1,5 +1,9 @@
 # **LegacyCoder** – Modernizing Legacy Source Code with LLM‑powered Agents
 
+> The Testing Agent has been rebuilt. See [its current guide](agents/testing/README.md)
+> for the reference corpus, hybrid retrieval, source-aware prompts, and setup commands.
+> The older FAISS knowledge-base description below is historical.
+
 **Summary**
 LegacyCoder is a **FastAPI** service that receives legacy source code and returns a clean, idiomatic Python implementation.  It orchestrates four LLM‑driven agents:
 1️⃣ **ComprehensionAgent** – parses the legacy snippet and produces a detailed JSON description.

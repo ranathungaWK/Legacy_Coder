@@ -12,7 +12,8 @@ verification_agent = VerificationAgent()
 @router.post("/rewrite" , response_model=TestExecutionOutput)
 async def verify_rewritten_code(rewritten: RewriteOutput):
     # 1. Generate tests
-    test_code = await testing_agent.generate_tests(rewritten.python_code)
+    generated = await testing_agent.generate_with_evidence(rewritten.python_code)
+    test_code = generated.test_code
 
     # 2. Run verification
     result = await verification_agent.verify(rewritten.python_code, test_code)
@@ -20,6 +21,8 @@ async def verify_rewritten_code(rewritten: RewriteOutput):
     # 3. return structured result
     return TestExecutionOutput(
         test_code=test_code,
-        execution_result=result
+        execution_result=result,
+        rag_references=list(generated.evidence.references),
+        retrieval_queries=list(generated.evidence.queries),
     )
 

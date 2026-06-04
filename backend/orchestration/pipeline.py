@@ -88,7 +88,14 @@ class ModernizationPipeline:
 
         # Step 4/5: Test Generation + Verification
         try:
-            test_code = await self.testing_agent.generate_tests(python_code)
+            generated = await self.testing_agent.generate_with_evidence(
+                python_code, legacy_code=payload.code, language=payload.language,
+                explanation=explanation, compiler_dialect=payload.compiler_dialect,
+                verified_examples=payload.verified_examples,
+            )
+            test_code = generated.test_code
+            rag_references = list(generated.evidence.references)
+            retrieval_queries = list(generated.evidence.queries)
 
             # Attempt to extract code blocks if the LLM returned prose with
             # embedded code (common when LLMs return explanations). If code
@@ -136,6 +143,8 @@ class ModernizationPipeline:
                     "test_outcome": TestExecutionOutput(
                         test_code=sanitized,
                         execution_result=execution_result,
+                        rag_references=rag_references,
+                        retrieval_queries=retrieval_queries,
                     ),
                 }
 
@@ -196,7 +205,9 @@ class ModernizationPipeline:
                 "syntax_error": None,
                 "test_outcome": TestExecutionOutput(
                     test_code=test_code,
-                    execution_result=execution_result
+                    execution_result=execution_result,
+                    rag_references=rag_references,
+                    retrieval_queries=retrieval_queries,
                 )
             }
         except Exception as e:
@@ -209,5 +220,6 @@ class ModernizationPipeline:
                 "rewrite": rewrite,
                 "syntax_valid": True,
                 "syntax_error": None,
-                "test_outcome": None
+                "test_outcome": None,
+                "testing_error": f"Test generation/verification failed: {type(e).__name__}. See server logs.",
             }

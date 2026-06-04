@@ -67,7 +67,10 @@ IDENTIFICATION DIVISION.
         
     print("\n--- STEP 3: TESTING AGENT ---")
     try:
-        raw_test_code = await test_agent.generate_tests(python_code)
+        raw_test_code = await test_agent.generate_tests(
+            python_code, legacy_code=payload.code, language=payload.language,
+            explanation=explanation,
+        )
         print("Raw Generated Test Code from Agent:\n", raw_test_code)
         
         # This is what pipeline does:

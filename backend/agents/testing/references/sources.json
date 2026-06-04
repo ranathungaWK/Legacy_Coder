@@ -1,0 +1,201 @@
+[
+  {
+    "id": "cobol-check",
+    "title": "COBOL Check README",
+    "url": "https://github.com/openmainframeproject/cobol-check",
+    "download_url": "https://raw.githubusercontent.com/openmainframeproject/cobol-check/master/README.md",
+    "category": "language_testing",
+    "language": "cobol",
+    "version": "archived project; snapshot",
+    "note": "Historical testing patterns; not an actively maintained framework."
+  },
+  {
+    "id": "cobol-check-wiki",
+    "title": "COBOL Check testing reference",
+    "url": "https://github.com/openmainframeproject/cobol-check/wiki",
+    "category": "language_testing",
+    "language": "cobol",
+    "version": "archived wiki; snapshot"
+  },
+  {
+    "id": "ibm-zunit",
+    "title": "IBM ZUnit: Generating and editing COBOL test cases",
+    "url": "https://www.ibm.com/docs/en/developer-for-zos/15.0.x?topic=applications-generating-editing-cobol-test-cases",
+    "category": "language_testing",
+    "language": "cobol",
+    "dialect": "ibm",
+    "version": "Developer for z/OS 15.0.x"
+  },
+  {
+    "id": "cime-fortran",
+    "title": "CIME Fortran Unit Testing",
+    "url": "https://esmci.github.io/cime/versions/master/html/ccs/model-configuration/fortran-unit-testing.html",
+    "category": "language_testing",
+    "language": "fortran",
+    "version": "master snapshot"
+  },
+  {
+    "id": "lfric-fortran",
+    "title": "Met Office LFRic Unit Testing",
+    "url": "https://metoffice.github.io/lfric_core/how_to_use_it/testing/unit_testing.html",
+    "category": "language_testing",
+    "language": "fortran",
+    "version": "site snapshot"
+  },
+  {
+    "id": "test-drive",
+    "title": "Fortran-lang test-drive usage",
+    "url": "https://github.com/fortran-lang/test-drive",
+    "download_url": "https://raw.githubusercontent.com/fortran-lang/test-drive/main/README.md",
+    "category": "language_testing",
+    "language": "fortran",
+    "version": "main snapshot"
+  },
+  {
+    "id": "pfunit",
+    "title": "pFUnit usage and examples",
+    "url": "https://github.com/Goddard-Fortran-Ecosystem/pFUnit",
+    "download_url": "https://raw.githubusercontent.com/Goddard-Fortran-Ecosystem/pFUnit/master/README.md",
+    "category": "language_testing",
+    "language": "fortran",
+    "version": "master snapshot"
+  },
+  {
+    "id": "istqb",
+    "title": "ISTQB CTFL syllabus: test analysis and design",
+    "url": "https://istqb.org/wp-content/uploads/2024/11/ISTQB_CTFL_Syllabus_v4.0.1.pdf",
+    "format": "pdf",
+    "category": "test_design",
+    "language": "any",
+    "version": "4.0.1",
+    "sections": [
+      "4.1 Test Techniques Overview",
+      "4.2 Black-Box Test Techniques",
+      "4.3 White-Box Test Techniques",
+      "4.4 Experience-Based Test Techniques"
+    ]
+  },
+  {
+    "id": "pytest-assert",
+    "title": "pytest assertions and expected exceptions",
+    "url": "https://docs.pytest.org/en/stable/how-to/assert.html",
+    "category": "python_testing",
+    "language": "any",
+    "version": "stable snapshot"
+  },
+  {
+    "id": "pytest-parametrize",
+    "title": "pytest parametrization",
+    "url": "https://docs.pytest.org/en/stable/how-to/parametrize.html",
+    "category": "python_testing",
+    "language": "any",
+    "version": "stable snapshot"
+  },
+  {
+    "id": "pytest-fixtures",
+    "title": "pytest fixtures",
+    "url": "https://docs.pytest.org/en/stable/how-to/fixtures.html",
+    "category": "python_testing",
+    "language": "any",
+    "version": "stable snapshot"
+  },
+  {
+    "id": "pytest-monkeypatch",
+    "title": "pytest monkeypatch",
+    "url": "https://docs.pytest.org/en/stable/how-to/monkeypatch.html",
+    "category": "python_testing",
+    "language": "any",
+    "version": "stable snapshot"
+  },
+  {
+    "id": "python-decimal",
+    "title": "Python decimal arithmetic",
+    "url": "https://docs.python.org/3.11/library/decimal.html",
+    "category": "numeric_testing",
+    "language": "any",
+    "version": "Python 3.11"
+  },
+  {
+    "id": "numpy-allclose",
+    "title": "NumPy assert_allclose",
+    "url": "https://numpy.org/doc/stable/reference/generated/numpy.testing.assert_allclose.html",
+    "category": "numeric_testing",
+    "language": "any",
+    "version": "stable snapshot",
+    "note": "NumPy is optional. API availability must match the sandbox version."
+  },
+  {
+    "id": "hypothesis",
+    "title": "Hypothesis strategies reference",
+    "url": "https://hypothesis.readthedocs.io/en/latest/reference/strategies.html",
+    "category": "property_testing",
+    "language": "any",
+    "version": "latest snapshot",
+    "note": "Use only when Hypothesis is available in the execution environment."
+  },
+  {
+    "id": "gnucobol",
+    "title": "GnuCOBOL Programmer's Guide",
+    "url": "https://gnucobol.sourceforge.io/HTML/gnucobpg.html",
+    "category": "language_semantics",
+    "language": "cobol",
+    "dialect": "gnucobol",
+    "version": "linked guide snapshot"
+  },
+  {
+    "id": "ibm-trunc",
+    "title": "IBM Enterprise COBOL TRUNC compiler option",
+    "url": "https://www.ibm.com/docs/en/cobol-zos/6.3?topic=v6-trunc",
+    "category": "language_semantics",
+    "language": "cobol",
+    "dialect": "ibm",
+    "version": "Enterprise COBOL 6.3"
+  },
+  {
+    "id": "migration-research",
+    "title": "Automated Testing of COBOL to Java Transformation",
+    "url": "https://arxiv.org/abs/2504.10548",
+    "download_url": "https://arxiv.org/pdf/2504.10548",
+    "format": "pdf",
+    "category": "migration_validation",
+    "language": "cobol",
+    "version": "arXiv 2504.10548",
+    "note": "Research methodology; Java-specific APIs are not Python instructions."
+  },
+  {
+    "id": "cobol-a-brief-example",
+    "title": "COBOL Check worked unit-test example",
+    "url": "https://github.com/openmainframeproject/cobol-check/wiki/A-Brief-Example",
+    "category": "language_testing",
+    "language": "cobol",
+    "version": "archived wiki snapshot",
+    "note": "Historical reference. Translate testing technique into pytest; do not emit COBOL Check syntax."
+  },
+  {
+    "id": "cobol-common-test-case-patterns",
+    "title": "COBOL Check common test case patterns",
+    "url": "https://github.com/openmainframeproject/cobol-check/wiki/Common-Test-Case-Patterns",
+    "category": "language_testing",
+    "language": "cobol",
+    "version": "archived wiki snapshot",
+    "note": "Historical reference. Translate testing technique into pytest; do not emit COBOL Check syntax."
+  },
+  {
+    "id": "cobol-approach-to-mocks",
+    "title": "COBOL Check approach to mocks",
+    "url": "https://github.com/openmainframeproject/cobol-check/wiki/Approach-to-Mocks",
+    "category": "language_testing",
+    "language": "cobol",
+    "version": "archived wiki snapshot",
+    "note": "Historical reference. Translate testing technique into pytest; do not emit COBOL Check syntax."
+  },
+  {
+    "id": "cobol-test-suite-syntax",
+    "title": "COBOL Check test suite syntax",
+    "url": "https://github.com/openmainframeproject/cobol-check/wiki/Test-Suite-Syntax",
+    "category": "language_testing",
+    "language": "cobol",
+    "version": "archived wiki snapshot",
+    "note": "Historical reference. Translate testing technique into pytest; do not emit COBOL Check syntax."
+  }
+]

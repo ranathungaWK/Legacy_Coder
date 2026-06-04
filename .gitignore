@@ -7,3 +7,18 @@ __pycache__/
 dist/
 build/
 .DS_Store
+
+# Local Python environments and task caches
+.venv/
+.testing-runtime/
+.codex-task-cache/
+# Download published references locally; retain provenance and scope notes in Git.
+backend/agents/testing/references/raw/
+backend/agents/testing/references/snapshots/*.json
+!backend/agents/testing/references/snapshots/ibm-zunit.json
+!backend/agents/testing/references/snapshots/ibm-trunc.json
+backend/agents/testing/references/sync_report.json
+backend/agents/testing/retrieval_index/
+backend/artifacts/testing_rag_*.log
+backend/artifacts/testing_rag_live_tests.py
+backend/artifacts/testing_rag_evaluation.json

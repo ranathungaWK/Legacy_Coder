@@ -1,5 +1,9 @@
 # LegacyCoder
 
+The rebuilt source-aware Testing Agent, reference documents, retrieval design,
+and rebuild/evaluation commands are documented in
+[the Testing Agent guide](backend/agents/testing/README.md).
+
 LegacyCoder is a production-grade AI modernization pipeline that transforms legacy codebase logic (such as COBOL) into modern, clean Python 3.12 code. 
 
 The application utilizes a multi-agent AI architecture powered by `langchain-google-genai` and orchestrates a comprehensive end-to-end workflow: from code comprehension to transformation, automated test generation, and isolated sandbox verification.
@@ -34,10 +38,10 @@ The pipeline consists of a sequential, four-stage orchestration process managed 
 ### 3. Test Generation Agent
 - **Purpose:** Generates a robust `pytest` suite covering normal cases, edge cases, and boundary conditions for the modernized Python code.
 - **Technology Stack:**
-  - **RAG System (Retrieval-Augmented Generation):** Uses FAISS (`faiss-cpu`) to perform similarity searches on known testing patterns and documentation.
+  - **RAG System (Retrieval-Augmented Generation):** Uses focused, filtered searches over attributable COBOL/Fortran testing guides, ISTQB, pytest and numerical references, combining dense embeddings and lexical ranking.
   - Langchain `ChatPromptTemplate` injecting retrieved RAG context.
   - `ChatGoogleGenerativeAI` to construct the tests.
-  - Custom sanitation logic to extract clean Python blocks from markdown.
+  - Source-aware prompts, cited retrieval evidence, and static validation of generated test scripts.
 
 ### 4. Verification Agent
 - **Purpose:** Safely executes the modernized Python code against the generated test suite and ensures that syntax validation and runtime correctness are fully verified before deployment.

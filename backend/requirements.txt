@@ -6,4 +6,10 @@ langchain
 langchain-community
 langchain-core
 langchain-google-genai
+langchain-huggingface
 faiss-cpu
+sentence-transformers
+langchain-text-splitters
+beautifulsoup4
+pypdf
+numpy

@@ -1,4 +1,6 @@
 .venv
+.testing-runtime
+agents/testing/references/raw/
 __pycache__
 *.pyc
 tests/

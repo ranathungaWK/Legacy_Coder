@@ -1,0 +1,14 @@
+{
+  "id": "ibm-zunit",
+  "title": "IBM ZUnit: Generating and editing COBOL test cases",
+  "url": "https://www.ibm.com/docs/en/developer-for-zos/15.0.x?topic=applications-generating-editing-cobol-test-cases",
+  "category": "language_testing",
+  "language": "cobol",
+  "dialect": "ibm",
+  "version": "Developer for z/OS 15.0.x",
+  "text": "CURATED REFERENCE NOTE - NOT A FULL IBM DOCUMENT SNAPSHOT\nIBM ZUnit documents a workflow for unit testing Enterprise COBOL programs on z/OS. Configure generation, compilation/linking, and execution options. Create a test case and any stubs needed for called subprograms or file I/O. Record test data or manually supply test entries, then build the source program, test program and stubs.\nTesting application: isolate external subprograms and file operations; make inputs and expected observations explicit. Translate isolation techniques into Python boundary mocks when generating pytest. ZUnit setup and mainframe build commands do not apply to the Python sandbox. This note does not specify COBOL arithmetic semantics or the expected output of an application. The full source page returned HTTP 403 during ingestion; consult the linked IBM page for complete procedures and product limitations.",
+  "content_kind": "curated_reference_note",
+  "sha256": "bd9f1fa395d03259b7b120fbcb00c8539300b5a204bd135fb9d7d2b09f31ac1e",
+  "note": "Full page unavailable (HTTP 403). Attributed scope note, not original documentation.",
+  "retrieved_at": "2026-10-26"
+}

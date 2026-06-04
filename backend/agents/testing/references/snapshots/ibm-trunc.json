@@ -1,0 +1,14 @@
+{
+  "id": "ibm-trunc",
+  "title": "IBM Enterprise COBOL TRUNC compiler option",
+  "url": "https://www.ibm.com/docs/en/cobol-zos/6.3?topic=v6-trunc",
+  "category": "language_semantics",
+  "language": "cobol",
+  "dialect": "ibm",
+  "version": "Enterprise COBOL 6.3",
+  "text": "CURATED REFERENCE NOTE - NOT A FULL IBM DOCUMENT SNAPSHOT\nIBM Enterprise COBOL documents the TRUNC compiler option for binary data handling. This is compiler-specific guidance: do not transfer IBM TRUNC behavior to GnuCOBOL or another COBOL dialect without evidence. Testing should record the actual compiler option, receiving-field declaration and verified original-program outputs before asserting behavior at numeric limits.\nThe Python test generator must not infer a particular truncation mode solely from the presence of a COBOL binary field. Python integer behavior alone does not establish the expected legacy result. Where compiler settings are unknown, record that limitation and use independently verified examples rather than guessed overflow assertions. The linked IBM documentation is the authority; the complete page returned HTTP 403 during ingestion. This short note is metadata and scope guidance, not a replacement for the compiler manual.",
+  "content_kind": "curated_reference_note",
+  "sha256": "96516315ef8524c04931ed6491d119f412267e9a9fe9561af042d68ab5b0d2c1",
+  "note": "Full page unavailable (HTTP 403). Attributed scope note, not original documentation.",
+  "retrieved_at": "2026-10-26"
+}

@@ -10,3 +10,4 @@ class ModernizationPipelineResponse(BaseModel):
     syntax_valid: bool
     syntax_error: Optional[str] = None
     test_outcome: Optional[TestExecutionOutput] = None
+    testing_error: Optional[str] = None
