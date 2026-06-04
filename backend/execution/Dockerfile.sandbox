@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+
+# Install system packages needed for building native Python extensions
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pytest and pytest-cov with all dependencies
+RUN pip install --no-cache-dir pytest pytest-cov
+
+WORKDIR /workspace
+
+ENTRYPOINT ["pytest"]

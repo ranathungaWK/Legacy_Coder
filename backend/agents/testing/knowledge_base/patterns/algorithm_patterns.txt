@@ -1,0 +1,905 @@
+================================================================
+ALGORITHM PATTERNS - TEST CASE KNOWLEDGE BASE
+================================================================
+Reference for building Python test cases that validate algorithmic
+code. Covers sorting, searching, recursion, and loops — including
+their edge cases: empty input and worst-case complexity scenarios.
+All examples use Python (pytest).
+================================================================
+
+CONTEXT FOR TEST CASE AGENT
+-----------------------------
+Algorithmic code is especially prone to silent failures on boundary
+inputs. A sort that works on 1000 elements may silently corrupt a
+single-element list. A search that finds elements correctly may
+loop forever on an empty list. Every algorithm test suite must
+cover: empty input, single element, duplicates, pre-sorted,
+reverse-sorted, and large N for complexity checks.
+
+
+----------------------------------------------------------------
+SECTION 1: SORTING
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Sorting algorithms must preserve all elements (no loss, no
+duplication), produce a correctly ordered output, and handle all
+boundary inputs without crashing. The most dangerous bugs are:
+off-by-one in partition logic, infinite loops when pivot selection
+is poor, and mutation of the original list when the caller expects
+a copy.
+
+CORRECTNESS INVARIANTS TO TEST FOR ANY SORT
+---------------------------------------------
+1. Output length equals input length (no elements lost or added)
+2. Output is sorted in the expected order
+3. All input elements appear in output (multiset equality)
+4. Original input is not mutated (if sort returns new list)
+5. Stable sort preserves original order of equal elements
+
+STANDARD TEST CASES FOR SORTING
+---------------------------------
+    import pytest
+    from collections import Counter
+
+    def assert_sort_correct(sort_fn, input_list, reverse=False):
+        result = sort_fn(input_list[:])   # pass a copy
+        expected = sorted(input_list, reverse=reverse)
+        assert result == expected
+        assert len(result) == len(input_list)
+        assert Counter(result) == Counter(input_list)
+
+    # Test 1: empty input
+    def test_sort_empty():
+        assert sort_fn([]) == []
+
+    # Test 2: single element
+    def test_sort_single_element():
+        assert sort_fn([42]) == [42]
+
+    # Test 3: already sorted (best case for some, worst for others)
+    def test_sort_already_sorted():
+        lst = [1, 2, 3, 4, 5]
+        result = sort_fn(lst[:])
+        assert result == [1, 2, 3, 4, 5]
+
+    # Test 4: reverse sorted (worst case for naive algorithms)
+    def test_sort_reverse_sorted():
+        lst = [5, 4, 3, 2, 1]
+        result = sort_fn(lst[:])
+        assert result == [1, 2, 3, 4, 5]
+
+    # Test 5: all duplicates
+    def test_sort_all_duplicates():
+        lst = [7, 7, 7, 7, 7]
+        result = sort_fn(lst[:])
+        assert result == [7, 7, 7, 7, 7]
+
+    # Test 6: two elements
+    def test_sort_two_elements():
+        assert sort_fn([2, 1]) == [1, 2]
+        assert sort_fn([1, 2]) == [1, 2]
+
+    # Test 7: negative numbers
+    def test_sort_negatives():
+        lst = [-3, 1, -1, 0, 2, -2]
+        result = sort_fn(lst[:])
+        assert result == [-3, -2, -1, 0, 1, 2]
+
+    # Test 8: mixed negatives and positives
+    def test_sort_mixed():
+        assert sort_fn([3, -1, 0, -5, 2]) == [-5, -1, 0, 2, 3]
+
+    # Test 9: original list not mutated
+    def test_sort_does_not_mutate_input():
+        original = [3, 1, 2]
+        copy = original[:]
+        sort_fn(original)
+        assert original == copy   # original unchanged
+
+    # Test 10: duplicate adjacent elements
+    def test_sort_with_duplicates():
+        lst = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3]
+        result = sort_fn(lst[:])
+        assert result == sorted(lst)
+        assert Counter(result) == Counter(lst)
+
+    # Test 11: stability — equal elements preserve original order
+    def test_sort_stability():
+        data = [("b", 2), ("a", 1), ("b", 1), ("a", 2)]
+        result = stable_sort_fn(data, key=lambda x: x[0])
+        # Elements with same key must be in original relative order
+        assert result[0] == ("a", 1)
+        assert result[1] == ("a", 2)
+        assert result[2] == ("b", 2)
+        assert result[3] == ("b", 1)
+
+    # Test 12: large input (performance / stack overflow check)
+    def test_sort_large_input():
+        import random
+        lst = list(range(10000))
+        random.shuffle(lst)
+        result = sort_fn(lst[:])
+        assert result == list(range(10000))
+
+ALGORITHM-SPECIFIC EDGE CASES
+-------------------------------
+    # QUICKSORT — worst case: sorted input with bad pivot (first element)
+    def test_quicksort_worst_case_sorted():
+        # Naive quicksort with first-element pivot: O(n²) on sorted input
+        # Test that it handles it without stack overflow
+        lst = list(range(1000))   # sorted — worst case for naive pivot
+        result = quicksort(lst[:])
+        assert result == lst
+
+    def test_quicksort_worst_case_reverse():
+        lst = list(range(1000, 0, -1))   # reverse sorted
+        result = quicksort(lst[:])
+        assert result == list(range(1, 1001))
+
+    def test_quicksort_all_same():
+        # All-equal array causes quadratic behaviour in some implementations
+        lst = [5] * 1000
+        result = quicksort(lst[:])
+        assert result == lst
+
+    # MERGESORT — stack depth check for large input
+    def test_mergesort_stack_depth():
+        import sys
+        lst = list(range(10000))
+        # Should not hit RecursionError (depth ~log2(10000) ≈ 13)
+        result = mergesort(lst[:])
+        assert result == lst
+
+    # BUBBLE SORT — worst case is O(n²) on reverse sorted
+    def test_bubblesort_no_swap_on_sorted():
+        # Optimised bubble sort should detect sorted and stop early
+        lst = [1, 2, 3, 4, 5]
+        result = bubblesort(lst[:])
+        assert result == lst
+
+    # INSERTION SORT — single already-in-place element
+    def test_insertion_sort_single():
+        assert insertion_sort([99]) == [99]
+
+
+----------------------------------------------------------------
+SECTION 2: SEARCHING
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Search algorithms must correctly report found/not-found, return
+correct positions (not just boolean), and handle empty inputs,
+duplicates, and targets that are at the boundaries (first and
+last element). Binary search has the most dangerous edge cases
+because off-by-one in lo/hi causes infinite loops or missed results.
+
+CORRECTNESS INVARIANTS FOR ANY SEARCH
+---------------------------------------
+1. Returns valid index when element exists
+2. Returns sentinel (None / -1) when element does not exist
+3. Handles empty collection without error
+4. Handles single-element collection
+5. Finds elements at position 0 (first) and n-1 (last)
+6. Handles duplicates consistently (leftmost / any / rightmost)
+
+LINEAR SEARCH TEST CASES
+-------------------------
+    import pytest
+
+    # Test 1: found — middle of list
+    def test_linear_search_found_middle():
+        assert linear_search([1, 2, 3, 4, 5], 3) == 2
+
+    # Test 2: found — first element
+    def test_linear_search_found_first():
+        assert linear_search([10, 20, 30], 10) == 0
+
+    # Test 3: found — last element
+    def test_linear_search_found_last():
+        assert linear_search([10, 20, 30], 30) == 2
+
+    # Test 4: not found
+    def test_linear_search_not_found():
+        result = linear_search([1, 2, 3], 99)
+        assert result == -1 or result is None
+
+    # Test 5: empty list
+    def test_linear_search_empty():
+        result = linear_search([], 5)
+        assert result == -1 or result is None
+
+    # Test 6: single element — found
+    def test_linear_search_single_found():
+        assert linear_search([42], 42) == 0
+
+    # Test 7: single element — not found
+    def test_linear_search_single_not_found():
+        result = linear_search([42], 99)
+        assert result == -1 or result is None
+
+    # Test 8: duplicates — returns first occurrence
+    def test_linear_search_duplicates():
+        result = linear_search([3, 1, 3, 3], 3)
+        assert result == 0   # first occurrence
+
+BINARY SEARCH TEST CASES
+--------------------------
+    # Binary search requires sorted input.
+    # Most dangerous bugs: off-by-one in lo/hi, infinite loop on 2 elements.
+
+    # Test 1: found — middle
+    def test_binary_search_found():
+        assert binary_search([1, 3, 5, 7, 9], 5) == 2
+
+    # Test 2: found — first element
+    def test_binary_search_found_first():
+        assert binary_search([1, 2, 3, 4, 5], 1) == 0
+
+    # Test 3: found — last element
+    def test_binary_search_found_last():
+        assert binary_search([1, 2, 3, 4, 5], 5) == 4
+
+    # Test 4: not found — below minimum
+    def test_binary_search_below_range():
+        result = binary_search([2, 4, 6, 8], 1)
+        assert result == -1 or result is None
+
+    # Test 5: not found — above maximum
+    def test_binary_search_above_range():
+        result = binary_search([2, 4, 6, 8], 10)
+        assert result == -1 or result is None
+
+    # Test 6: not found — between elements
+    def test_binary_search_between_elements():
+        result = binary_search([1, 3, 5, 7], 4)
+        assert result == -1 or result is None
+
+    # Test 7: empty list
+    def test_binary_search_empty():
+        result = binary_search([], 5)
+        assert result == -1 or result is None
+
+    # Test 8: single element — found
+    def test_binary_search_single_found():
+        assert binary_search([7], 7) == 0
+
+    # Test 9: single element — not found
+    def test_binary_search_single_not_found():
+        result = binary_search([7], 99)
+        assert result == -1 or result is None
+
+    # Test 10: two elements — left
+    def test_binary_search_two_elements_left():
+        assert binary_search([1, 2], 1) == 0
+
+    # Test 11: two elements — right
+    def test_binary_search_two_elements_right():
+        assert binary_search([1, 2], 2) == 1
+
+    # Test 12: two elements — not found
+    def test_binary_search_two_elements_not_found():
+        result = binary_search([1, 3], 2)
+        assert result == -1 or result is None
+
+    # Test 13: all identical elements
+    def test_binary_search_all_identical():
+        result = binary_search([5, 5, 5, 5, 5], 5)
+        assert result is not None and result != -1
+        assert 0 <= result <= 4
+
+    # Test 14: large sorted array — correct result and no timeout
+    def test_binary_search_large():
+        lst = list(range(0, 100000, 2))   # even numbers
+        assert binary_search(lst, 99998) == 49999
+        result = binary_search(lst, 99999)
+        assert result == -1 or result is None
+
+    # Test 15: midpoint overflow (Python int doesn't overflow, but test logic)
+    def test_binary_search_midpoint_correctness():
+        lo, hi = 0, 10
+        mid = lo + (hi - lo) // 2   # correct: avoids overflow in C/Java
+        assert mid == 5
+
+    # Test 16: leftmost occurrence (bisect_left behaviour)
+    def test_binary_search_leftmost_duplicate():
+        import bisect
+        lst = [1, 2, 2, 2, 3]
+        idx = bisect.bisect_left(lst, 2)
+        assert idx == 1   # first 2 is at index 1
+
+    # Test 17: rightmost occurrence (bisect_right behaviour)
+    def test_binary_search_rightmost_duplicate():
+        import bisect
+        lst = [1, 2, 2, 2, 3]
+        idx = bisect.bisect_right(lst, 2) - 1
+        assert idx == 3   # last 2 is at index 3
+
+PARAMETRIZE PATTERN FOR SEARCHING
+-----------------------------------
+    @pytest.mark.parametrize("lst, target, expected", [
+        ([],          5,   -1),
+        ([5],         5,    0),
+        ([5],         9,   -1),
+        ([1, 2, 3],   1,    0),
+        ([1, 2, 3],   3,    2),
+        ([1, 2, 3],   99,  -1),
+        ([1, 1, 1],   1,    0),    # duplicates — first occurrence
+    ])
+    def test_search_parametrized(lst, target, expected):
+        result = search_fn(lst, target)
+        if expected == -1:
+            assert result == -1 or result is None
+        else:
+            assert result == expected
+
+
+----------------------------------------------------------------
+SECTION 3: RECURSION
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Recursive algorithms are vulnerable to: hitting Python's recursion
+limit (default 1000), missing base cases (infinite recursion),
+incorrect base case values, and accumulating errors in the return
+value chain. Always test base cases explicitly.
+
+BASE CASE TESTS (MOST CRITICAL)
+---------------------------------
+    import pytest
+    import sys
+
+    # Test 1: base case n=0 for factorial
+    def test_factorial_base_zero():
+        assert factorial(0) == 1   # 0! = 1 by definition
+
+    def test_factorial_base_one():
+        assert factorial(1) == 1   # 1! = 1
+
+    # Test 2: base case for Fibonacci
+    def test_fibonacci_base_zero():
+        assert fib(0) == 0
+
+    def test_fibonacci_base_one():
+        assert fib(1) == 1
+
+    # Test 3: base case for recursive sum
+    def test_recursive_sum_empty():
+        assert recursive_sum([]) == 0
+
+    def test_recursive_sum_single():
+        assert recursive_sum([5]) == 5
+
+STANDARD RECURSIVE FUNCTION TESTS
+------------------------------------
+    # Factorial:
+    @pytest.mark.parametrize("n, expected", [
+        (0,  1),
+        (1,  1),
+        (2,  2),
+        (3,  6),
+        (4,  24),
+        (5,  120),
+        (10, 3628800),
+    ])
+    def test_factorial(n, expected):
+        assert factorial(n) == expected
+
+    def test_factorial_negative_raises():
+        with pytest.raises((ValueError, RecursionError)):
+            factorial(-1)
+
+    # Fibonacci:
+    @pytest.mark.parametrize("n, expected", [
+        (0,  0),
+        (1,  1),
+        (2,  1),
+        (3,  2),
+        (4,  3),
+        (5,  5),
+        (6,  8),
+        (10, 55),
+    ])
+    def test_fibonacci(n, expected):
+        assert fib(n) == expected
+
+    def test_fibonacci_negative_raises():
+        with pytest.raises((ValueError, RecursionError)):
+            fib(-1)
+
+    # Recursive flatten:
+    @pytest.mark.parametrize("nested, expected", [
+        ([],               []),
+        ([1],              [1]),
+        ([[1, 2], [3]],    [1, 2, 3]),
+        ([1, [2, [3]]],    [1, 2, 3]),
+        ([[], [[]]],       []),
+    ])
+    def test_recursive_flatten(nested, expected):
+        assert recursive_flatten(nested) == expected
+
+RECURSION LIMIT TESTS
+-----------------------
+    def test_deep_recursion_raises_recursion_error():
+        with pytest.raises(RecursionError):
+            factorial(sys.getrecursionlimit() + 100)
+
+    def test_recursion_depth_stays_within_limit():
+        # Tree of depth 500 should be fine (log2(10^150) ≈ 500)
+        result = factorial(20)   # depth only 20 — well within limit
+        assert result == 2432902008176640000
+
+    # Tail recursion — Python does NOT optimize tail calls
+    def test_iterative_preferred_for_deep_input():
+        # Test iterative version for large N where recursion would fail
+        assert iterative_factorial(10000) > 0   # no RecursionError
+
+MEMOIZATION / CACHING TESTS
+-----------------------------
+    from functools import lru_cache
+
+    @lru_cache(maxsize=None)
+    def fib_cached(n):
+        if n <= 1:
+            return n
+        return fib_cached(n - 1) + fib_cached(n - 2)
+
+    def test_memoized_fib_large():
+        assert fib_cached(50) == 12586269025
+        assert fib_cached(100) == 354224848179261915075
+
+    def test_memoized_fib_cache_hit():
+        fib_cached.cache_clear()
+        fib_cached(10)
+        info = fib_cached.cache_info()
+        assert info.currsize > 0   # cache was populated
+
+TREE / GRAPH RECURSION
+-----------------------
+    # Test recursive tree traversal with degenerate inputs:
+
+    def test_traversal_single_node():
+        tree = {"val": 1, "left": None, "right": None}
+        result = inorder(tree)
+        assert result == [1]
+
+    def test_traversal_none_root():
+        assert inorder(None) == []
+
+    def test_traversal_left_skewed():
+        # Only left children — depth = N, tests recursion depth
+        node = None
+        for i in range(5):
+            node = {"val": i, "left": node, "right": None}
+        result = inorder(node)
+        assert result == list(range(5))
+
+    def test_traversal_right_skewed():
+        node = None
+        for i in range(4, -1, -1):
+            node = {"val": i, "left": None, "right": node}
+        result = inorder(node)
+        assert result == list(range(5))
+
+
+----------------------------------------------------------------
+SECTION 4: LOOPS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Loop bugs are almost always off-by-one errors, incorrect
+termination conditions, mutations of the collection being iterated,
+or accumulators that are not initialised correctly. Always test:
+zero iterations, one iteration, boundary values, and that the
+loop terminates.
+
+LOOP BOUNDARY TESTS
+--------------------
+    import pytest
+
+    # Test 1: zero iterations — accumulator must return identity value
+    def test_loop_sum_empty():
+        assert loop_sum([]) == 0
+
+    def test_loop_product_empty():
+        assert loop_product([]) == 1   # identity for multiplication
+
+    def test_loop_max_empty_raises():
+        with pytest.raises((ValueError, TypeError)):
+            loop_max([])
+
+    # Test 2: single iteration
+    def test_loop_sum_single():
+        assert loop_sum([5]) == 5
+
+    def test_loop_product_single():
+        assert loop_product([7]) == 7
+
+    def test_loop_max_single():
+        assert loop_max([42]) == 42
+
+    # Test 3: exactly two iterations — minimum for comparison logic
+    def test_loop_max_two_elements():
+        assert loop_max([3, 7]) == 7
+        assert loop_max([7, 3]) == 7
+
+    # Test 4: correct count of iterations
+    def test_loop_count_matches_expected():
+        N = 10
+        count = 0
+        for _ in range(N):
+            count += 1
+        assert count == N   # range(N) gives exactly N iterations
+
+    def test_loop_count_fencepost():
+        # Common: range(1, N+1) gives N iterations too
+        assert list(range(1, 6)) == [1, 2, 3, 4, 5]   # 5 items, not 4 or 6
+
+OFF-BY-ONE TESTS
+-----------------
+    # Test 5: loop includes last element
+    def test_sum_includes_last():
+        # DO NOT accidentally stop before last element
+        assert loop_sum([1, 2, 3, 4, 5]) == 15   # not 10 (missing 5)
+
+    # Test 6: loop starts at correct element
+    def test_sum_starts_at_first():
+        assert loop_sum([10, 1, 1]) == 12   # not 2 (skipping 10)
+
+    # Test 7: indices — first and last element accessed correctly
+    def test_first_element_accessed():
+        data = [99, 1, 2, 3]
+        assert loop_max(data) == 99
+
+    def test_last_element_accessed():
+        data = [1, 2, 3, 99]
+        assert loop_max(data) == 99
+
+MUTATION DURING ITERATION
+--------------------------
+    # Mutating a list while iterating it is a common bug.
+
+    def test_remove_during_iteration_wrong():
+        # This is a BUG — never do this in production:
+        lst = [1, 2, 3, 4, 5]
+        for x in lst:
+            if x % 2 == 0:
+                lst.remove(x)   # skips elements!
+        # Result is wrong: [1, 3, 5] would be correct, but may not be
+        assert lst != [1, 3, 5]   # documents the bug
+
+    def test_remove_during_iteration_correct():
+        # Correct: iterate over a copy or use list comprehension
+        lst = [1, 2, 3, 4, 5]
+        lst = [x for x in lst if x % 2 != 0]
+        assert lst == [1, 3, 5]
+
+    def test_dict_iteration_no_mutation():
+        d = {"a": 1, "b": 2, "c": 3}
+        # Mutating dict size during iteration raises RuntimeError
+        with pytest.raises(RuntimeError):
+            for key in d:
+                if key == "b":
+                    del d[key]
+
+ACCUMULATOR INITIALISATION
+---------------------------
+    # Test 8: accumulator must be correct identity
+    def test_sum_accumulator_starts_at_zero():
+        result = 0
+        for x in [1, 2, 3]:
+            result += x
+        assert result == 6   # not 7 (started at 1) or 5 (started at -1)
+
+    def test_product_accumulator_starts_at_one():
+        result = 1
+        for x in [2, 3, 4]:
+            result *= x
+        assert result == 24   # not 0 (started at 0)
+
+    # Test 9: min/max accumulator must start with first element or sentinel
+    def test_max_accumulator_not_zero():
+        # BUG: initialising max to 0 fails on all-negative lists
+        lst = [-5, -3, -1, -4]
+        result = lst[0]
+        for x in lst[1:]:
+            if x > result:
+                result = x
+        assert result == -1   # correct: -1 is the max
+
+    def test_min_accumulator_not_zero():
+        lst = [5, 3, 1, 4]
+        result = lst[0]
+        for x in lst[1:]:
+            if x < result:
+                result = x
+        assert result == 1
+
+NESTED LOOPS
+------------
+    # Test 10: outer and inner loop counts
+    def test_nested_loop_iteration_count():
+        count = 0
+        for i in range(3):
+            for j in range(4):
+                count += 1
+        assert count == 12   # 3 × 4
+
+    # Test 11: nested loop with empty inner
+    def test_nested_loop_empty_inner():
+        count = 0
+        for i in range(10):
+            for j in range(0):   # never executes
+                count += 1
+        assert count == 0
+
+    # Test 12: matrix traversal — correct row/col order
+    def test_matrix_traversal_order():
+        matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        elements = []
+        for row in matrix:
+            for col in row:
+                elements.append(col)
+        assert elements == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+WHILE LOOP TERMINATION
+-----------------------
+    # Test 13: while loop terminates on correct condition
+    def test_while_loop_terminates():
+        n = 16
+        steps = 0
+        while n != 1:
+            n = n // 2 if n % 2 == 0 else 3 * n + 1
+            steps += 1
+            assert steps < 1000   # termination guard for test
+
+    # Test 14: while loop does not execute on false initial condition
+    def test_while_loop_zero_iterations():
+        n = 0
+        count = 0
+        while n > 0:
+            count += 1
+            n -= 1
+        assert count == 0
+
+
+----------------------------------------------------------------
+SECTION 5: EMPTY INPUT EDGE CASES
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Empty input is the single most common algorithmic edge case.
+Every function that accepts a collection must be tested with
+an empty collection. The expected behaviour must be defined
+explicitly: return [], return 0, return None, or raise.
+
+EMPTY INPUT TEST MATRIX
+------------------------
+    import pytest
+
+    # Sorting:
+    def test_sort_empty():       assert sort_fn([]) == []
+    def test_sort_empty_str():   assert sort_strings([]) == []
+    def test_sort_empty_tuple(): assert sort_fn(()) == [] or sort_fn(()) == ()
+
+    # Searching:
+    def test_search_empty_list():
+        result = search_fn([], 5)
+        assert result is None or result == -1
+
+    def test_search_empty_string():
+        result = search_in_string("", "a")
+        assert result is None or result == -1
+
+    # Recursion:
+    def test_recursive_sum_empty():      assert recursive_sum([]) == 0
+    def test_recursive_max_empty():
+        with pytest.raises((ValueError, IndexError)):
+            recursive_max([])
+
+    # Loops:
+    def test_filter_loop_empty():        assert filter_fn([], lambda x: True) == []
+    def test_map_loop_empty():           assert map_fn([], lambda x: x*2) == []
+    def test_reduce_loop_empty_raises():
+        with pytest.raises((TypeError, ValueError)):
+            reduce_fn([], lambda a, b: a + b)
+
+    # Aggregation:
+    def test_mean_empty_raises():
+        with pytest.raises((ZeroDivisionError, ValueError, statistics.StatisticsError)):
+            mean([])
+    def test_sum_empty():    assert sum([]) == 0
+    def test_min_empty():
+        with pytest.raises(ValueError): min([])
+    def test_max_empty():
+        with pytest.raises(ValueError): max([])
+
+EMPTY COLLECTION PARAMETRIZE PATTERN
+--------------------------------------
+    @pytest.mark.parametrize("empty", [
+        [],
+        (),
+        {},
+        set(),
+        "",
+        iter([]),
+    ])
+    def test_algorithm_handles_all_empty_types(empty):
+        # Adapt based on what types your algorithm accepts
+        try:
+            result = algorithm_fn(empty)
+            assert result == [] or result == 0 or result is None
+        except (ValueError, TypeError):
+            pass   # raising is also acceptable if documented
+
+
+----------------------------------------------------------------
+SECTION 6: WORST-CASE COMPLEXITY
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Worst-case complexity tests ensure the algorithm terminates in
+a reasonable time and does not hit Python's recursion limit on
+large inputs. These tests catch O(n²) algorithms masquerading
+as O(n log n), and naive recursion masquerading as iterative.
+
+WORST-CASE INPUT PATTERNS
+---------------------------
+    Algorithm          | Worst-case input
+    -------------------|------------------------------------------
+    Quicksort (naive)  | Sorted or reverse-sorted input
+    Bubble sort        | Reverse-sorted input
+    Insertion sort     | Reverse-sorted input
+    Naive recursion    | Large N hitting sys.getrecursionlimit()
+    Naive string concat| Repeated += in loop (O(n²) memory)
+    Nested loops       | N×N where N is large
+    Linear search      | Target is last element or not present
+
+SORTING WORST-CASE TESTS
+--------------------------
+    import pytest
+    import time
+
+    def assert_runs_in_time(fn, args, max_seconds=2.0):
+        start = time.perf_counter()
+        result = fn(*args)
+        elapsed = time.perf_counter() - start
+        assert elapsed < max_seconds, f"Took {elapsed:.2f}s — too slow"
+        return result
+
+    # Quicksort worst case — sorted input
+    def test_quicksort_sorted_input_performance():
+        lst = list(range(10000))
+        assert_runs_in_time(quicksort, (lst,), max_seconds=2.0)
+
+    def test_quicksort_reverse_sorted_performance():
+        lst = list(range(10000, 0, -1))
+        assert_runs_in_time(quicksort, (lst,), max_seconds=2.0)
+
+    # Any sort — large random input
+    def test_sort_large_random_terminates():
+        import random
+        lst = list(range(100000))
+        random.shuffle(lst)
+        result = assert_runs_in_time(sort_fn, (lst,), max_seconds=5.0)
+        assert result == list(range(100000))
+
+    # Bubble sort — only use small N
+    def test_bubblesort_worst_case_small_n():
+        lst = list(range(1000, 0, -1))   # reverse sorted, 1000 elements
+        result = assert_runs_in_time(bubblesort, (lst,), max_seconds=5.0)
+        assert result == list(range(1, 1001))
+
+RECURSION DEPTH TESTS
+-----------------------
+    import sys
+
+    def test_recursion_limit_not_hit_normal_input():
+        # Depth ≤ 500 is safe; default limit is 1000
+        result = recursive_fn(500)
+        assert result is not None
+
+    def test_recursion_limit_hit_large_input():
+        with pytest.raises(RecursionError):
+            recursive_fn(sys.getrecursionlimit() + 100)
+
+    def test_iterative_version_handles_large_n():
+        # Iterative implementation should handle N >> recursion limit
+        result = iterative_fn(100000)
+        assert result is not None
+
+STRING CONCATENATION WORST CASE
+---------------------------------
+    def test_string_join_vs_concat_correctness():
+        N = 10000
+        # Correct O(n): join
+        result_join = "".join(str(i) for i in range(N))
+        # Naive O(n²): repeated +=
+        result_concat = ""
+        for i in range(N):
+            result_concat += str(i)
+        assert result_join == result_concat   # same result
+
+    def test_string_join_large_is_fast():
+        N = 100000
+        assert_runs_in_time(
+            lambda: "".join(str(i) for i in range(N)),
+            args=(),
+            max_seconds=1.0
+        )
+
+NESTED LOOP COMPLEXITY TEST
+-----------------------------
+    def test_nested_loop_n_squared_terminates():
+        N = 1000   # N² = 1,000,000 iterations — should be fast enough
+        count = 0
+        for i in range(N):
+            for j in range(N):
+                count += 1
+        assert count == N * N
+
+    def test_algorithm_not_accidentally_cubic():
+        # If algorithm should be O(n²), test that N=1000 completes fast
+        N = 1000
+        assert_runs_in_time(n_squared_algo, (N,), max_seconds=2.0)
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+SORTING — MUST TEST
+    empty []                     → []
+    single [x]                   → [x]
+    two elements [b, a]          → [a, b]
+    already sorted               → unchanged
+    reverse sorted               → sorted (worst case for naive)
+    all duplicates               → all duplicates
+    negative numbers             → sorted correctly
+    original not mutated         → copy unchanged
+    stability                    → equal elements in original order
+    large N random               → correct and terminates in time
+
+SEARCHING — MUST TEST
+    empty list                   → -1 or None
+    single element found         → 0
+    single element not found     → -1 or None
+    first element                → 0
+    last element                 → len-1
+    not present                  → -1 or None
+    between elements (binary)    → -1 or None
+    all duplicates               → valid index
+    two elements (binary)        → left=0, right=1
+
+RECURSION — MUST TEST
+    base case n=0                → correct identity (1 for factorial, 0 for fib)
+    base case n=1                → correct
+    negative input               → raises ValueError or RecursionError
+    deep input                   → RecursionError (if no tail-call opt)
+    memoized version large N     → correct without hitting limit
+
+LOOPS — MUST TEST
+    zero iterations              → accumulator identity (0, 1, [], None)
+    one iteration                → single-element result
+    exactly two iterations       → minimum for comparison
+    off-by-one: first element    → included in result
+    off-by-one: last element     → included in result
+    mutation during iteration    → use copy or comprehension
+    min/max init to first element → not 0 (fails on all-negative input)
+
+WORST CASE — MUST TEST
+    sort sorted input            → quicksort O(n²) exposed
+    sort reverse sorted          → bubble/insertion O(n²) exposed
+    recursion large N            → RecursionError expected or iterative used
+    string concat in loop        → use join(), not +=
+    nested loops                 → N=1000 should complete in < 2s
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

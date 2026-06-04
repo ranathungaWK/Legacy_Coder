@@ -1,0 +1,536 @@
+================================================================
+C TO PYTHON CONVERSION - TEST CASE KNOWLEDGE BASE
+================================================================
+Reference for building Python test cases that validate code
+converted from C. Covers the most dangerous semantic differences
+between C and Python that silent conversion bugs hide in.
+All test examples use Python (pytest).
+================================================================
+
+CONTEXT FOR TEST CASE AGENT
+-----------------------------
+When Python code is converted from C, the translator may have
+carried over C assumptions that are INVALID in Python. The tests
+in this file exist to catch those assumption failures. Each
+section documents what C does, what Python does instead, and
+what test cases to generate to expose regressions.
+
+
+----------------------------------------------------------------
+SECTION 1: INTEGER OVERFLOW BEHAVIOR
+----------------------------------------------------------------
+
+WHAT C DOES
+-----------
+C integers have fixed sizes (int=32bit, long=64bit typically).
+When arithmetic exceeds the type's range, the value WRAPS AROUND
+silently — no error, no exception. This is defined behavior for
+unsigned types and undefined behavior for signed types in C.
+
+    // C behavior:
+    int x = 2147483647;   // INT_MAX
+    x = x + 1;            // wraps to -2147483648 — no error
+    unsigned int u = 0;
+    u = u - 1;            // wraps to 4294967295 — no error
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python integers are arbitrary precision. They NEVER overflow.
+2147483647 + 1 == 2147483648, not -2147483648. This is almost
+always correct behavior, but converted code that RELIED on C
+overflow for algorithm correctness (e.g., hash functions,
+cyclic counters, bitmasks) will produce wrong results silently.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. Hash functions that relied on 32-bit wrap produce wrong hashes
+2. Cyclic counters that expected wrap-around run forever
+3. Bitmask operations that assumed 32-bit range produce oversized ints
+4. Algorithms that used unsigned subtraction underflow now return
+   large positive integers instead of wrapping to near-max
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: values that would overflow int32 in C stay correct in Python
+    INT32_MAX = 2147483647
+    INT32_MIN = -2147483648
+
+    def test_no_overflow_at_int32_boundary():
+        result = INT32_MAX + 1
+        assert result == 2147483648        # Python: correct big int
+        assert result != INT32_MIN         # NOT -2147483648 (C wrap)
+        assert result > INT32_MAX
+
+    def test_no_overflow_subtraction_boundary():
+        result = INT32_MIN - 1
+        assert result == -2147483649       # Python: correct
+        assert result != INT32_MAX         # NOT 2147483647 (C wrap)
+
+    # Test 2: large multiplication doesn't truncate
+    def test_large_multiplication_no_truncation():
+        result = INT32_MAX * INT32_MAX
+        assert result == 4611686014132420609  # exact, not truncated
+
+    # Test 3: bitmask operations — converted code should use explicit masks
+    MASK_32 = 0xFFFFFFFF
+
+    def test_bitmask_stays_in_32bit_range():
+        # If converted code uses bitmasks, result must be masked explicitly
+        value = (0xFFFFFFFF + 1) & MASK_32
+        assert value == 0                  # correct: wraps within mask
+        assert value <= MASK_32
+
+    # Test 4: cyclic counter behavior — if converted code expected wrap
+    def test_counter_does_not_wrap_without_explicit_modulo():
+        counter = INT32_MAX
+        counter += 1
+        assert counter == INT32_MAX + 1    # Python: no wrap
+        # Converted code that needs wrapping must use modulo explicitly:
+        counter_wrapped = (counter) % (2**32)
+        assert counter_wrapped == INT32_MIN + 2**32  # modular equivalent
+
+    # Test 5: simulate C unsigned wrap for converted hash code
+    def c_uint32_add(a, b):
+        return (a + b) & 0xFFFFFFFF
+
+    def test_explicit_uint32_wrap():
+        assert c_uint32_add(0xFFFFFFFF, 1) == 0      # wraps to 0
+        assert c_uint32_add(0xFFFFFFFE, 2) == 0      # wraps to 0
+        assert c_uint32_add(0, 0) == 0
+        assert c_uint32_add(0x7FFFFFFF, 1) == 0x80000000
+
+    # Test 6: numpy simulates C overflow — if converted code uses numpy
+    def test_numpy_int32_overflow_behavior():
+        import numpy as np
+        a = np.int32(2147483647)
+        result = a + np.int32(1)
+        assert result == np.int32(-2147483648)        # wraps like C
+        assert isinstance(result, np.int32)
+
+    # Test 7: values at boundaries that differ between C and Python
+    @pytest.mark.parametrize("value, expected_python", [
+        (2**31 - 1,   2147483647),     # INT32_MAX — same in both
+        (2**31,       2147483648),     # would overflow C int — Python fine
+        (2**32,       4294967296),     # would overflow C uint — Python fine
+        (2**63 - 1,   9223372036854775807),  # INT64_MAX
+        (2**63,       9223372036854775808),  # would overflow C long long
+    ])
+    def test_large_integer_values_exact(value, expected_python):
+        assert value == expected_python
+
+
+----------------------------------------------------------------
+SECTION 2: MANUAL MEMORY MANAGEMENT REMOVED
+----------------------------------------------------------------
+
+WHAT C DOES
+-----------
+C requires explicit allocation (malloc/calloc) and deallocation
+(free). Common C bugs include: use-after-free, double-free,
+buffer overflows from writing past allocated size, and memory
+leaks from forgetting to free.
+
+    // C patterns that have no direct Python equivalent:
+    int *arr = malloc(10 * sizeof(int));
+    arr[10] = 5;   // buffer overflow — undefined behavior
+    free(arr);
+    free(arr);     // double free — undefined behavior
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python uses garbage collection with reference counting. Memory is
+managed automatically. Converted code has no malloc/free. The
+translation risks are different: the converter may have introduced
+Python-specific bugs while eliminating C memory bugs.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. Buffer overflow checks that existed in C may have been dropped —
+   the Python translation accepts arbitrarily large indices silently
+   via list growth, hiding logic that expected size limits
+2. Sentinel values (NULL pointer checks) may become missing None
+   checks in Python
+3. Pointer arithmetic translated to list indexing may produce wrong
+   offsets (especially 0-based vs 1-based)
+4. Stack-allocated fixed-size arrays in C become dynamic Python lists
+   — size constraint is no longer enforced unless explicitly added
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: array/list size limits preserved explicitly
+    # C code may have used a fixed-size array — Python list grows unbounded
+    MAX_BUFFER = 256
+
+    def write_buffer(buf, index, value):
+        if index < 0 or index >= MAX_BUFFER:
+            raise IndexError(f"Buffer index {index} out of range [0, {MAX_BUFFER})")
+        buf[index] = value
+
+    def test_buffer_rejects_oversize_index():
+        buf = [0] * MAX_BUFFER
+        with pytest.raises(IndexError):
+            write_buffer(buf, MAX_BUFFER, 1)      # one past end
+        with pytest.raises(IndexError):
+            write_buffer(buf, MAX_BUFFER + 100, 1)
+
+    def test_buffer_accepts_valid_index():
+        buf = [0] * MAX_BUFFER
+        write_buffer(buf, 0, 42)
+        write_buffer(buf, MAX_BUFFER - 1, 99)
+        assert buf[0] == 42
+        assert buf[MAX_BUFFER - 1] == 99
+
+    # Test 2: NULL pointer → None check
+    # C functions returned NULL on failure; Python should return None
+    def find_item(lst, value):
+        for item in lst:
+            if item == value:
+                return item
+        return None   # was NULL in C
+
+    def test_returns_none_when_not_found():
+        assert find_item([1, 2, 3], 99) is None
+
+    def test_returns_none_on_empty_input():
+        assert find_item([], 1) is None
+
+    def test_caller_handles_none_return():
+        result = find_item([1, 2, 3], 99)
+        # Converted code that dereferences result without None check would crash
+        assert result is None or isinstance(result, int)
+
+    # Test 3: struct → object field access — None field is not zero
+    class Node:
+        def __init__(self, value, next_node=None):
+            self.value = value
+            self.next = next_node
+
+    def test_linked_list_none_terminator():
+        node = Node(1)
+        assert node.next is None     # was NULL in C
+        assert node.next != 0        # Python None is not C's NULL==0
+
+    # Test 4: fixed-size array initialisation — Python list may not be
+    #          pre-filled the way C stack arrays are (uninitialized in C)
+    def test_list_initialized_to_zero():
+        buf = [0] * 10
+        assert all(x == 0 for x in buf)
+        assert len(buf) == 10
+
+    # Test 5: pointer arithmetic offset → list slicing offset
+    def test_slice_offset_correct():
+        data = [10, 20, 30, 40, 50]
+        # C: ptr + 2 means start at index 2
+        # Python: data[2:] is equivalent
+        assert data[2:] == [30, 40, 50]
+        assert data[2] == 30    # C: *(ptr + 2)
+
+    # Test 6: no dangling reference — Python GC handles this
+    def test_object_accessible_after_reassignment():
+        a = [1, 2, 3]
+        b = a           # b holds reference, not a copy
+        a = None        # a is gone but b still holds the list
+        assert b == [1, 2, 3]   # valid — no use-after-free possible
+
+
+----------------------------------------------------------------
+SECTION 3: POINTER LOGIC BECOMES REFERENCES
+----------------------------------------------------------------
+
+WHAT C DOES
+-----------
+C pointers carry both an address and enable arithmetic. Passing
+a pointer passes the address; the callee can modify the original.
+Arrays ARE pointers in C. Pointer arithmetic steps through memory.
+
+    // C:
+    void increment(int *x) { *x += 1; }  // modifies caller's variable
+    int arr[5] = {1,2,3,4,5};
+    int *p = arr + 2;                     // pointer arithmetic
+    *p = 99;                              // modifies arr[2]
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python has references, not pointers. Immutable types (int, str,
+tuple, float) are ALWAYS passed by value semantics — the function
+cannot modify the caller's variable. Mutable types (list, dict,
+objects) are passed by reference — mutations ARE visible to caller.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. C functions that modified an int via pointer now do nothing —
+   the Python equivalent mutates a local copy
+2. Converted functions that returned void but modified a pointer
+   argument must now return the value explicitly
+3. Array pointer aliasing — two C pointers to same array become
+   two Python list references — mutations visible through both
+4. C string mutation via char* becomes wrong — Python strings
+   are immutable
+5. Pointer-to-pointer (**ptr) patterns are often mistranslated
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: int modification — C "pass by pointer" → must return value
+    # Wrong conversion: def increment(x): x += 1  (does nothing)
+    # Correct conversion: def increment(x): return x + 1
+
+    def increment(x):
+        return x + 1   # correct conversion from: void increment(int *x)
+
+    def test_increment_returns_new_value():
+        x = 5
+        result = increment(x)
+        assert result == 6
+        assert x == 5     # original unchanged — Python int is immutable
+
+    def test_caller_must_use_return_value():
+        original = 10
+        new_val = increment(original)
+        assert new_val == 11
+        assert original == 10    # not modified in place
+
+    # Test 2: list IS mutable — modifications inside function ARE visible
+    def append_item(lst, item):
+        lst.append(item)   # modifies in place — same as C pointer to array
+
+    def test_list_mutation_visible_to_caller():
+        data = [1, 2, 3]
+        append_item(data, 4)
+        assert data == [1, 2, 3, 4]   # mutation visible — like C pointer
+
+    # Test 3: aliased lists — both references see mutations
+    def test_list_aliasing():
+        a = [1, 2, 3]
+        b = a              # b is an alias, not a copy
+        b[0] = 99
+        assert a[0] == 99  # a sees the change — same as C pointer aliasing
+        assert a is b      # same object
+
+    def test_list_copy_is_independent():
+        a = [1, 2, 3]
+        b = a.copy()       # shallow copy — independent
+        b[0] = 99
+        assert a[0] == 1   # a unchanged
+        assert a is not b
+
+    # Test 4: string immutability — char* mutation doesn't work
+    def test_string_immutable():
+        s = "hello"
+        with pytest.raises(TypeError):
+            s[0] = "H"     # cannot assign to string index
+
+        # Correct conversion: create a new string
+        new_s = "H" + s[1:]
+        assert new_s == "Hello"
+        assert s == "hello"   # original unchanged
+
+    # Test 5: pointer arithmetic → list index arithmetic
+    @pytest.mark.parametrize("base, offset, expected", [
+        (0, 0, 10),
+        (0, 2, 30),
+        (0, 4, 50),
+        (2, 0, 30),    # C: ptr = arr+2; ptr[0] → Python: arr[2+0]
+        (2, 1, 40),    # C: ptr[1]       → Python: arr[2+1]
+    ])
+    def test_pointer_arithmetic_as_list_index(base, offset, expected):
+        arr = [10, 20, 30, 40, 50]
+        assert arr[base + offset] == expected
+
+    # Test 6: swap via pointers → swap return values
+    # Wrong: def swap(a, b): a, b = b, a  (no effect outside)
+    # Correct: return tuple
+    def swap(a, b):
+        return b, a   # correct conversion
+
+    def test_swap_returns_values():
+        x, y = 3, 7
+        x, y = swap(x, y)
+        assert x == 7
+        assert y == 3
+
+    # Test 7: struct pointer → object reference mutation
+    class Point:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+    def move(point, dx, dy):
+        point.x += dx   # object IS mutable — like C struct pointer
+        point.y += dy
+
+    def test_object_mutation_through_reference():
+        p = Point(1, 2)
+        move(p, 3, 4)
+        assert p.x == 4   # mutation visible — like C struct pointer
+        assert p.y == 6
+
+
+----------------------------------------------------------------
+SECTION 4: DIVISION BEHAVIOR DIFFERENCES
+----------------------------------------------------------------
+
+WHAT C DOES
+-----------
+C integer division truncates toward zero.
+-7 / 2 == -3 in C (truncates toward zero, not floor).
+C % result has the same sign as the dividend.
+-7 % 2 == -1 in C.
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python integer division floors toward negative infinity.
+-7 // 2 == -4 in Python (floors toward -inf, not truncates).
+Python % result has the same sign as the DIVISOR.
+-7 % 2 == 1 in Python.
+Python / always returns float even for two ints.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. Negative integer division produces different results
+2. Negative modulo produces different signs
+3. C int/int gave int — Python / gives float, not int
+4. Converted code using / where // is needed produces floats
+5. Floor-based vs truncation-based differences in loops and indices
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: Python // floors, C / truncates — differs for negatives
+    @pytest.mark.parametrize("a, b, c_result, python_floor_result", [
+        ( 7,  2,  3,  3),    # positive: same
+        (-7,  2, -3, -4),    # negative dividend: DIFFERS
+        ( 7, -2, -3, -4),    # negative divisor: DIFFERS
+        (-7, -2,  3,  3),    # both negative: same
+    ])
+    def test_division_truncation_vs_floor(a, b, c_result, python_floor_result):
+        # Python floor division:
+        assert a // b == python_floor_result
+        # To replicate C truncation-toward-zero in Python:
+        import math
+        assert int(math.trunc(a / b)) == c_result
+
+    # Test 2: C-equivalent truncating division helper
+    def c_div(a, b):
+        """Integer division truncating toward zero, like C."""
+        return int(a / b)
+
+    @pytest.mark.parametrize("a, b, expected", [
+        ( 7,  2,  3),
+        (-7,  2, -3),
+        ( 7, -2, -3),
+        (-7, -2,  3),
+        ( 1,  3,  0),
+        (-1,  3,  0),
+    ])
+    def test_c_style_truncating_division(a, b, expected):
+        assert c_div(a, b) == expected
+
+    # Test 3: Python modulo vs C modulo — sign differs for negatives
+    @pytest.mark.parametrize("a, b, c_mod, python_mod", [
+        ( 7,  3,  1,  1),    # positive: same
+        (-7,  3, -1,  2),    # negative dividend: DIFFERS
+        ( 7, -3,  1, -2),    # negative divisor: DIFFERS
+        (-7, -3, -1, -1),    # both negative: same
+    ])
+    def test_modulo_sign_difference(a, b, c_mod, python_mod):
+        assert a % b == python_mod
+        # C-equivalent modulo:
+        assert int(a - b * int(a / b)) == c_mod
+
+    # Test 4: C-equivalent modulo helper
+    def c_mod(a, b):
+        """Modulo with C semantics (result sign = dividend sign)."""
+        return int(a - b * int(a / b))
+
+    @pytest.mark.parametrize("a, b, expected", [
+        ( 7,  3,  1),
+        (-7,  3, -1),
+        ( 7, -3,  1),
+        (-7, -3, -1),
+        ( 0,  5,  0),
+        ( 5,  5,  0),
+    ])
+    def test_c_mod_helper(a, b, expected):
+        assert c_mod(a, b) == expected
+
+    # Test 5: Python / returns float — converted code expecting int
+    def test_division_returns_float_in_python():
+        result = 7 / 2
+        assert result == 3.5
+        assert isinstance(result, float)   # NOT int like C
+
+    def test_integer_division_needs_floor_operator():
+        result = 7 // 2
+        assert result == 3
+        assert isinstance(result, int)
+
+    # Test 6: division in loop index — floor vs truncate affects iteration
+    def test_midpoint_calculation():
+        lo, hi = 0, 10
+        # C: mid = (lo + hi) / 2 → 5 (truncates)
+        # Python: same for positive, but must use // not /
+        mid = (lo + hi) // 2
+        assert mid == 5
+        assert isinstance(mid, int)   # usable as index
+
+    def test_midpoint_negative_range():
+        lo, hi = -9, -1
+        mid_python = (lo + hi) // 2    # Python: floors → -6
+        mid_c_like = int((lo + hi) / 2)  # C truncation → -5
+        assert mid_python == -6
+        assert mid_c_like == -5
+        # Test that the converted code uses the right one for the algorithm
+
+    # Test 7: division by zero still raises (same as C)
+    def test_division_by_zero_raises():
+        with pytest.raises(ZeroDivisionError):
+            _ = 1 // 0
+        with pytest.raises(ZeroDivisionError):
+            _ = 1 % 0
+        with pytest.raises(ZeroDivisionError):
+            _ = 1.0 / 0
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+INTEGER OVERFLOW
+    Python int: no overflow, arbitrary precision — always correct
+    C assumed INT32_MAX+1 wraps to INT32_MIN — Python gives 2**31
+    Use & 0xFFFFFFFF to emulate C uint32 wrap in Python
+    numpy int32 wraps like C — use for fidelity testing
+    Test: values at 2**31, 2**32, 2**63 — should NOT wrap in Python
+
+MEMORY MANAGEMENT
+    malloc/free → automatic GC — no use-after-free possible
+    NULL pointer → None — test all returns for None explicitly
+    Fixed C arrays → Python lists grow unbounded — add size guards
+    Buffer overflow → Python raises IndexError — test boundary indices
+    Pointer arithmetic offsets → test list[base+offset] == expected
+
+POINTER → REFERENCE
+    int via pointer: C modifies in place; Python must RETURN new value
+    list/dict/object: Python DOES mutate through reference (like C pointer)
+    str is immutable: char* mutation → must create new string
+    Aliased lists: both references see mutations — test both
+    Swap: C swaps via pointer → Python must use tuple return
+
+DIVISION
+    C:  7/2=3,  -7/2=-3   (truncates toward zero)
+    Py: 7//2=3, -7//2=-4  (floors toward -inf) — DIFFER for negatives
+    C:  -7%3=-1            (sign = dividend)
+    Py: -7%3=2             (sign = divisor)   — DIFFER for negatives
+    Python / always returns float — C int/int returns int
+    Use int(a/b) to replicate C truncating division in Python
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

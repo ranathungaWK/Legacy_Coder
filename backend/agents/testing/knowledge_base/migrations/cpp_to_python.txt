@@ -1,0 +1,549 @@
+================================================================
+C++ TO PYTHON CONVERSION - TEST CASE KNOWLEDGE BASE
+================================================================
+Reference for building Python test cases that validate code
+converted from C++. Covers pointer elimination, STL container
+mapping, and exception handling differences. All examples use
+Python (pytest).
+================================================================
+
+CONTEXT FOR TEST CASE AGENT
+-----------------------------
+C++ code converted to Python may carry hidden assumptions about
+RAII, value semantics vs reference semantics, STL container
+behaviour, and exception specifications. These tests expose those
+silent failures in the converted Python code.
+
+
+----------------------------------------------------------------
+SECTION 1: NO POINTERS IN PYTHON
+----------------------------------------------------------------
+
+WHAT C++ DOES
+-------------
+C++ has raw pointers, smart pointers (unique_ptr, shared_ptr,
+weak_ptr), and references (&). Objects can be heap- or
+stack-allocated. Ownership and lifetime are explicit.
+
+    // C++:
+    std::unique_ptr<Node> node = std::make_unique<Node>(42);
+    int* raw = new int(10);
+    delete raw;
+    void increment(int& x) { x++; }   // reference parameter
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python has only references (object references, not memory
+addresses). All objects are heap-allocated and GC-managed.
+There is no concept of ownership or stack vs heap allocation.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. RAII destructors (scope-based cleanup) disappear — resource
+   cleanup must move to context managers or explicit finally blocks
+2. unique_ptr's exclusivity is gone — multiple references to the
+   same object are allowed and silent
+3. Move semantics have no Python equivalent — converted code
+   that relied on std::move for efficiency silently copies
+4. Reference parameters (&) for primitive types must become
+   return values — same as C (see c_to_python.txt Section 3)
+5. nullptr checks become None checks
+6. this pointer inside methods is self in Python
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: RAII → context manager — resource always released
+    class ManagedResource:
+        def __init__(self):
+            self.open = False
+
+        def __enter__(self):
+            self.open = True
+            return self
+
+        def __exit__(self, *args):
+            self.open = False
+            return False   # don't suppress exceptions
+
+    def test_resource_released_on_success():
+        with ManagedResource() as r:
+            assert r.open is True
+        assert r.open is False   # released
+
+    def test_resource_released_on_exception():
+        r = ManagedResource()
+        with pytest.raises(RuntimeError):
+            with r:
+                raise RuntimeError("boom")
+        assert r.open is False   # released despite exception
+
+    # Test 2: nullptr → None — all factory functions must handle None
+    def create_node(value):
+        if value is None:
+            return None   # was: return nullptr in C++
+        return {"value": value, "next": None}
+
+    def test_returns_none_for_invalid_input():
+        assert create_node(None) is None
+
+    def test_caller_handles_none_node():
+        node = create_node(None)
+        # Converted code that dereferences without None check would crash
+        if node is not None:
+            assert node["value"] is not None
+        # If None, no crash — just skip
+
+    # Test 3: reference parameter → return value
+    # C++: void double_val(int& x) { x *= 2; }
+    # Python: must return
+    def double_val(x):
+        return x * 2
+
+    def test_double_val_returns_new_value():
+        x = 5
+        result = double_val(x)
+        assert result == 10
+        assert x == 5         # original unchanged
+
+    # Test 4: multiple references — no ownership enforcement
+    def test_shared_reference_mutation():
+        a = [1, 2, 3]
+        b = a         # both point to same list — no unique_ptr here
+        b.append(4)
+        assert len(a) == 4    # a sees mutation
+        assert a is b
+
+    # Test 5: this → self — method modifies its own state
+    class Counter:
+        def __init__(self):
+            self.count = 0
+
+        def increment(self):
+            self.count += 1      # self is Python's this
+
+        def get(self):
+            return self.count
+
+    def test_self_mutation_in_method():
+        c = Counter()
+        c.increment()
+        c.increment()
+        assert c.get() == 2
+
+    # Test 6: destructor logic → __del__ or context manager
+    class ResourceTracker:
+        cleaned_up = False
+
+        def close(self):
+            ResourceTracker.cleaned_up = True
+
+        def __del__(self):
+            self.close()
+
+    def test_cleanup_on_del():
+        r = ResourceTracker()
+        del r
+        # __del__ is not guaranteed to run immediately — prefer __exit__
+        # This test documents that cleanup is expected
+
+
+----------------------------------------------------------------
+SECTION 2: STL CONTAINERS → PYTHON LISTS / DICTS
+----------------------------------------------------------------
+
+WHAT C++ DOES
+-------------
+C++ STL containers have specific performance guarantees, ordering
+guarantees, and value semantics (copying is deep by default).
+
+    std::vector<int>       → Python list
+    std::map<K,V>          → Python dict (ordered since C++17/Py3.7)
+    std::unordered_map<K,V>→ Python dict
+    std::set<T>            → Python set
+    std::unordered_set<T>  → Python set
+    std::stack<T>          → Python list (with .append/.pop)
+    std::queue<T>          → collections.deque
+    std::deque<T>          → collections.deque
+    std::priority_queue<T> → heapq module
+    std::string            → Python str (immutable)
+    std::array<T,N>        → Python list (no fixed-size enforcement)
+    std::pair<A,B>         → Python tuple (a, b)
+    std::tuple<...>        → Python tuple
+
+SEMANTICS DIFFERENCES — WHAT TO TEST
+--------------------------------------
+    import pytest
+    from collections import deque
+    import heapq
+    import copy
+
+    # --- VECTOR → LIST ---
+
+    # Test 1: push_back → append
+    def test_vector_push_back():
+        vec = []
+        vec.append(1)      # push_back
+        vec.append(2)
+        vec.append(3)
+        assert vec == [1, 2, 3]
+
+    # Test 2: C++ vector copy is deep — Python list copy is shallow
+    def test_list_copy_is_shallow():
+        original = [[1, 2], [3, 4]]
+        shallow = original.copy()
+        shallow[0].append(99)
+        assert original[0] == [1, 2, 99]  # shallow: inner shared
+
+    def test_deep_copy_for_value_semantics():
+        original = [[1, 2], [3, 4]]
+        deep = copy.deepcopy(original)
+        deep[0].append(99)
+        assert original[0] == [1, 2]       # deep: independent
+
+    # Test 3: vector size and capacity — Python list grows dynamically
+    def test_list_size_no_capacity_limit():
+        lst = []
+        for i in range(10000):
+            lst.append(i)
+        assert len(lst) == 10000
+
+    # Test 4: vector.at(i) throws — Python raises IndexError
+    def test_index_out_of_bounds_raises():
+        lst = [1, 2, 3]
+        with pytest.raises(IndexError):
+            _ = lst[5]
+
+    # Test 5: std::array fixed size — Python list has no fixed size
+    ARRAY_SIZE = 10
+
+    def make_fixed_array(size, default=0):
+        return [default] * size
+
+    def test_fixed_array_initial_size():
+        arr = make_fixed_array(ARRAY_SIZE)
+        assert len(arr) == ARRAY_SIZE
+        assert all(x == 0 for x in arr)
+
+    # --- MAP → DICT ---
+
+    # Test 6: std::map is ordered by key — Python dict is insertion-ordered
+    def test_dict_is_insertion_ordered():
+        d = {}
+        d["b"] = 2
+        d["a"] = 1
+        d["c"] = 3
+        assert list(d.keys()) == ["b", "a", "c"]   # insertion order
+
+    # Test 7: std::map operator[] inserts default — Python raises KeyError
+    def test_dict_missing_key_raises():
+        d = {"a": 1}
+        with pytest.raises(KeyError):
+            _ = d["missing"]   # std::map would insert default!
+
+    def test_defaultdict_mimics_map_operator():
+        from collections import defaultdict
+        d = defaultdict(int)
+        d["missing"] += 1     # auto-inserts 0 + 1 = 1
+        assert d["missing"] == 1
+
+    # Test 8: map.find() → dict.get()
+    def test_map_find_equivalent():
+        d = {"a": 1, "b": 2}
+        assert d.get("a") == 1
+        assert d.get("z") is None     # not found → None (not end iterator)
+
+    # Test 9: map.count() for key existence
+    def test_key_existence():
+        d = {"a": 1}
+        assert "a" in d
+        assert "z" not in d
+
+    # --- SET ---
+
+    # Test 10: std::set is sorted — Python set is unordered
+    def test_set_is_unordered():
+        s = {3, 1, 2}
+        assert sorted(s) == [1, 2, 3]   # must sort for ordered access
+
+    # Test 11: set operations
+    def test_set_operations():
+        a = {1, 2, 3}
+        b = {2, 3, 4}
+        assert a | b == {1, 2, 3, 4}    # union
+        assert a & b == {2, 3}          # intersection
+        assert a - b == {1}             # difference
+        assert a ^ b == {1, 4}          # symmetric difference
+
+    # --- STACK → LIST ---
+
+    # Test 12: stack (LIFO) — use list.append / list.pop
+    def test_stack_lifo():
+        stack = []
+        stack.append(1)
+        stack.append(2)
+        stack.append(3)
+        assert stack.pop() == 3
+        assert stack.pop() == 2
+        assert stack.pop() == 1
+        assert stack == []
+
+    def test_stack_pop_empty_raises():
+        stack = []
+        with pytest.raises(IndexError):
+            stack.pop()
+
+    # --- QUEUE → DEQUE ---
+
+    # Test 13: queue (FIFO) — use collections.deque
+    def test_queue_fifo():
+        q = deque()
+        q.append(1)         # enqueue
+        q.append(2)
+        q.append(3)
+        assert q.popleft() == 1   # dequeue
+        assert q.popleft() == 2
+        assert q.popleft() == 3
+
+    # --- PRIORITY QUEUE → HEAPQ ---
+
+    # Test 14: priority_queue (max-heap in C++) → heapq (min-heap)
+    def test_minheap_smallest_first():
+        h = []
+        heapq.heappush(h, 3)
+        heapq.heappush(h, 1)
+        heapq.heappush(h, 2)
+        assert heapq.heappop(h) == 1   # smallest first
+
+    def test_maxheap_largest_first():
+        # Negate values to simulate C++ max-heap
+        h = []
+        for v in [3, 1, 2]:
+            heapq.heappush(h, -v)
+        assert -heapq.heappop(h) == 3  # largest first
+
+    # --- STRING → STR ---
+
+    # Test 15: std::string is mutable — Python str is immutable
+    def test_string_immutable():
+        s = "hello"
+        with pytest.raises(TypeError):
+            s[0] = "H"
+
+    def test_string_concatenation_creates_new():
+        s = "hello"
+        s2 = s + " world"
+        assert s == "hello"     # original unchanged
+        assert s2 == "hello world"
+
+    # Test 16: std::string.substr → str slicing
+    @pytest.mark.parametrize("s, start, length, expected", [
+        ("hello", 1, 3, "ell"),
+        ("hello", 0, 5, "hello"),
+        ("hello", 4, 1, "o"),
+    ])
+    def test_substr_as_slice(s, start, length, expected):
+        assert s[start:start+length] == expected
+
+    # Test 17: std::pair → tuple
+    def test_pair_as_tuple():
+        pair = (42, "hello")     # std::pair<int, std::string>
+        first, second = pair
+        assert first == 42
+        assert second == "hello"
+
+
+----------------------------------------------------------------
+SECTION 3: EXCEPTION HANDLING DIFFERS
+----------------------------------------------------------------
+
+WHAT C++ DOES
+-------------
+C++ has checked exception specifications (noexcept), catch by
+type hierarchy, and can catch by value, reference, or pointer.
+Exceptions not caught propagate to std::terminate.
+
+    try {
+        risky();
+    } catch (const std::invalid_argument& e) {
+        // handle
+    } catch (const std::exception& e) {
+        // base class catch
+    } catch (...) {
+        // catch-all — dangerous
+    }
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python exceptions are always caught by reference (as instances).
+All exceptions derive from BaseException. The catch-all equivalent
+is "except Exception" (not "except:" bare). Python has no
+noexcept — all functions can raise. Finally always runs.
+Python has no stack unwinding model beyond except/finally.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. C++ catch(...) → Python bare except: which catches SystemExit
+   and KeyboardInterrupt — wrong, use except Exception
+2. C++ exception types → Python exception types may be mismatched
+3. RAII destructors that ran during stack unwind → must use finally
+4. re-throw (throw;) → must use bare raise in Python
+5. noexcept functions — caller assumed no exception; Python breaks this
+6. std::exception::what() → str(e) or e.args[0] in Python
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: exception hierarchy — catch base catches derived
+    class AppError(Exception): pass
+    class ValidationError(AppError): pass
+    class NetworkError(AppError): pass
+
+    def test_base_class_catches_derived():
+        with pytest.raises(AppError):
+            raise ValidationError("bad input")
+
+    def test_specific_class_does_not_catch_sibling():
+        with pytest.raises(NetworkError):
+            # ValidationError is NOT caught by except NetworkError
+            try:
+                raise ValidationError("bad")
+            except NetworkError:
+                pass   # should not reach here
+
+    # Test 2: catch-all — avoid bare except, use except Exception
+    def safe_operation():
+        try:
+            risky = 1 / 0
+        except Exception as e:
+            return f"caught: {e}"
+        return "ok"
+
+    def test_catch_all_returns_error_message():
+        result = safe_operation()
+        assert result.startswith("caught:")
+
+    # Test 3: re-raise — bare raise preserves traceback
+    def process_with_reraise(value):
+        try:
+            return 10 / value
+        except ZeroDivisionError:
+            # log here, then re-raise
+            raise   # bare raise — like C++ throw;
+
+    def test_reraise_propagates_original():
+        with pytest.raises(ZeroDivisionError):
+            process_with_reraise(0)
+
+    # Test 4: finally always runs — equivalent to C++ destructor unwind
+    log = []
+
+    def with_cleanup():
+        try:
+            log.append("try")
+            raise RuntimeError("oops")
+        except RuntimeError:
+            log.append("except")
+            raise
+        finally:
+            log.append("finally")   # always runs
+
+    def test_finally_runs_on_exception():
+        log.clear()
+        with pytest.raises(RuntimeError):
+            with_cleanup()
+        assert "finally" in log
+        assert log == ["try", "except", "finally"]
+
+    # Test 5: std::exception::what() → str(e)
+    def test_exception_message_access():
+        try:
+            raise ValueError("invalid argument")
+        except ValueError as e:
+            assert str(e) == "invalid argument"
+            assert e.args[0] == "invalid argument"
+
+    # Test 6: exception chaining (C++ has no equivalent)
+    def test_exception_chaining():
+        with pytest.raises(RuntimeError) as exc_info:
+            try:
+                raise ValueError("root cause")
+            except ValueError as e:
+                raise RuntimeError("wrapped") from e
+        assert exc_info.value.__cause__ is not None
+        assert isinstance(exc_info.value.__cause__, ValueError)
+
+    # Test 7: custom exception with attributes
+    class DatabaseError(Exception):
+        def __init__(self, message, code):
+            super().__init__(message)
+            self.code = code
+
+    def test_custom_exception_attributes():
+        with pytest.raises(DatabaseError) as exc_info:
+            raise DatabaseError("connection failed", code=503)
+        assert exc_info.value.code == 503
+        assert "connection failed" in str(exc_info.value)
+
+    # Test 8: multiple exception types in one clause
+    def test_catch_multiple_types():
+        for bad_input in ["abc", None]:
+            with pytest.raises((ValueError, TypeError)):
+                int(bad_input)
+
+    # Test 9: exception from converted noexcept function
+    # C++ noexcept functions were guaranteed not to throw.
+    # Python has no such guarantee — test that callers handle raises.
+    def previously_noexcept(x):
+        # This was noexcept in C++ — Python may still raise
+        if x < 0:
+            raise ValueError("must be non-negative")
+        return x * 2
+
+    def test_previously_noexcept_can_raise():
+        with pytest.raises(ValueError):
+            previously_noexcept(-1)
+
+    def test_previously_noexcept_normal_case():
+        assert previously_noexcept(5) == 10
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+POINTERS → REFERENCES
+    unique_ptr   → single reference (no enforcement — test aliasing)
+    shared_ptr   → multiple references — test mutations via all refs
+    nullptr      → None — test all returns for None
+    RAII         → context manager (__enter__/__exit__) + finally
+    this         → self — test self.field mutations visible to caller
+    & parameter  → return value — primitives don't mutate in place
+    delete       → GC — no manual deallocation needed or possible
+
+STL CONTAINERS
+    vector       → list — copy is shallow, not deep like C++
+    map          → dict — insertion-ordered, missing key raises KeyError
+    unordered_map→ dict — same, faster lookup
+    set          → set  — unordered, no sorted iteration without sorted()
+    stack        → list (append/pop)
+    queue        → deque (append/popleft)
+    priority_queue → heapq — min-heap; negate values for max-heap
+    string       → str — immutable; .substr → slicing
+    pair/tuple   → Python tuple
+    map::operator[] inserts default — Python dict raises KeyError
+
+EXCEPTION HANDLING
+    catch(...)   → except Exception (NOT bare except:)
+    catch base   → catches all derived — same in Python
+    throw;       → raise  (bare raise preserves traceback)
+    noexcept     → no guarantee in Python — test all paths
+    RAII unwind  → finally block
+    what()       → str(e) or e.args[0]
+    exception chaining → raise X from Y (Python only)
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

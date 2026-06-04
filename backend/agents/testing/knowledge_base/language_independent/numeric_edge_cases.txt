@@ -1,0 +1,797 @@
+================================================================
+NUMERIC EDGE CASES - KNOWLEDGE BASE
+================================================================
+A focused reference for numeric edge cases in Python testing.
+Covers zero, negatives, large numbers, float precision, division
+by zero, and overflow/underflow. Designed for RAG-based test
+case generation agents. All examples are in Python (pytest).
+================================================================
+
+
+----------------------------------------------------------------
+SECTION 1: ZERO
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Zero is one of the most common sources of edge case bugs. It is
+falsy in Python, acts as an identity element for addition, an
+annihilator for multiplication, and is illegal as a divisor.
+Always test zero explicitly even when it seems obvious.
+
+ZERO IS FALSY
+--------------
+    assert not 0        # int zero is falsy
+    assert not 0.0      # float zero is falsy
+    assert not 0j       # complex zero is falsy
+
+    # BUG: using truthiness to check for a valid count
+    count = 0
+    if count:           # skips when count is 0 — bug if 0 is valid
+        process(count)
+
+    # CORRECT: explicit None check
+    if count is not None:
+        process(count)
+
+    # Test pattern:
+    def test_zero_is_valid_input():
+        assert process_count(0) == "done"   # must not be skipped
+
+ZERO IN ARITHMETIC
+------------------
+    assert 0 + 5 == 5       # additive identity
+    assert 0 * 999 == 0     # multiplicative annihilator
+    assert 0 ** 0 == 1      # Python returns 1 (mathematically undefined)
+    assert 0 ** 1 == 0
+    assert 1 ** 0 == 1
+    assert abs(0) == 0
+    assert -0 == 0          # negative zero equals zero for int
+    assert -0.0 == 0.0      # float negative zero equals zero
+
+    # Float negative zero has a distinct sign bit:
+    import math
+    assert math.copysign(1, -0.0) == -1.0
+    assert math.copysign(1,  0.0) ==  1.0
+
+ZERO IN MODULO AND FLOOR DIVISION
+-----------------------------------
+    assert 0 % 5 == 0       # zero mod anything is zero
+    assert 0 // 5 == 0      # zero floor-divided is zero
+    assert 5 % 1 == 0       # any integer mod 1 is zero
+
+    # Zero as divisor raises:
+    import pytest
+    with pytest.raises(ZeroDivisionError):
+        _ = 5 % 0
+    with pytest.raises(ZeroDivisionError):
+        _ = 5 // 0
+
+ZERO IN COLLECTIONS
+--------------------
+    assert [0] != []            # list with zero is not empty
+    assert bool([0]) is True    # list containing 0 is truthy
+    assert sum([0, 0, 0]) == 0
+    assert min([0, 1, 2]) == 0
+    assert max([-1, 0]) == 0
+
+ZERO IN COMPARISONS
+--------------------
+    assert 0 == 0.0             # int and float zero are equal
+    assert 0 == False           # False == 0 in Python
+    assert 0 != None
+    assert 0 != ""
+    assert 0 != []
+
+PYTEST TEST CASES FOR ZERO
+----------------------------
+    import pytest
+
+    @pytest.mark.parametrize("value, expected", [
+        (0, 0),
+        (0.0, 0.0),
+        (-0, 0),
+        (-0.0, 0.0),
+    ])
+    def test_zero_variants(value, expected):
+        assert value == expected
+
+    def test_function_handles_zero_input():
+        assert multiply(0, 100) == 0
+        assert multiply(100, 0) == 0
+        assert add(0, 0) == 0
+
+    def test_zero_length_input():
+        assert process([]) == []     # different from zero — empty
+        assert process([0]) == [0]   # zero element, not empty
+
+
+----------------------------------------------------------------
+SECTION 2: NEGATIVE NUMBERS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Negative numbers expose assumptions baked into code that was only
+tested with positive values. Functions that compute lengths, counts,
+indices, prices, or ages often break silently on negatives.
+
+NEGATIVE INTEGER BEHAVIOR
+--------------------------
+    assert -5 + 5 == 0
+    assert abs(-5) == 5
+    assert -5 < 0
+    assert min(-1, -2) == -2
+    assert max(-1, -2) == -1
+
+NEGATIVE MODULO (PYTHON-SPECIFIC)
+-----------------------------------
+Python modulo always returns a non-negative result when the divisor
+is positive. This differs from C, Java, and JavaScript.
+
+    assert  7 % 3 ==  1
+    assert -7 % 3 ==  2     # NOT -1 — Python floors toward -inf
+    assert  7 % -3 == -2    # negative divisor → negative result
+    assert -7 % -3 == -1
+
+    # Test:
+    @pytest.mark.parametrize("a, b, expected", [
+        ( 7,  3,  1),
+        (-7,  3,  2),
+        ( 7, -3, -2),
+        (-7, -3, -1),
+    ])
+    def test_modulo_signs(a, b, expected):
+        assert a % b == expected
+
+NEGATIVE FLOOR DIVISION
+------------------------
+Floor division rounds toward negative infinity, not toward zero.
+
+    assert  7 // 3 ==  2
+    assert -7 // 3 == -3    # NOT -2 — rounds DOWN, not toward zero
+    assert  7 // -3 == -3
+    assert -7 // -3 ==  2
+
+NEGATIVE EXPONENTS
+------------------
+    assert 2 ** -1 == 0.5
+    assert 2 ** -2 == 0.25
+    assert (-2) ** 3 == -8   # odd power: negative result
+    assert (-2) ** 2 ==  4   # even power: positive result
+
+NEGATIVE LIST INDICES
+---------------------
+    lst = [10, 20, 30, 40]
+    assert lst[-1] == 40     # last element
+    assert lst[-2] == 30
+    assert lst[-4] == 10     # first element (same as lst[0])
+
+    import pytest
+    with pytest.raises(IndexError):
+        _ = lst[-5]          # one beyond the start
+
+NEGATIVE AS INVALID INPUT
+--------------------------
+Many domain functions treat negatives as invalid:
+
+    def test_negative_age_rejected():
+        with pytest.raises(ValueError, match="cannot be negative"):
+            set_age(-1)
+
+    def test_negative_price_rejected():
+        with pytest.raises(ValueError):
+            create_product(name="Widget", price=-9.99)
+
+    def test_negative_quantity_rejected():
+        with pytest.raises(ValueError):
+            add_to_cart(item_id=1, quantity=-5)
+
+NEGATIVE SQRT (DOMAIN ERROR)
+------------------------------
+    import math
+    import pytest
+
+    with pytest.raises(ValueError):
+        math.sqrt(-1)       # raises ValueError in Python
+
+    # Complex sqrt is valid:
+    import cmath
+    result = cmath.sqrt(-1)
+    assert result == 1j
+
+PARAMETRIZE PATTERN FOR NEGATIVES
+-----------------------------------
+    @pytest.mark.parametrize("value", [-1, -100, -0.001, -999999])
+    def test_function_rejects_negative(value):
+        with pytest.raises(ValueError):
+            validated_input(value)
+
+    @pytest.mark.parametrize("a, b, expected", [
+        (-1, -1,  1),
+        (-1,  1, -1),
+        ( 1, -1, -1),
+        (-5,  0,  0),
+    ])
+    def test_multiply_with_negatives(a, b, expected):
+        assert multiply(a, b) == expected
+
+
+----------------------------------------------------------------
+SECTION 3: LARGE NUMBERS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Python integers are arbitrary precision and never overflow. However,
+large numbers can cause performance issues, unexpected float precision
+loss, and failures in systems with fixed-size integer types (numpy,
+databases, APIs).
+
+PYTHON INT IS ARBITRARY PRECISION
+-----------------------------------
+    # Python int never overflows — it grows as needed
+    assert 2 ** 1000 > 0
+    assert 10 ** 100 > 0   # googol
+    factorial_100 = 1
+    for i in range(1, 101):
+        factorial_100 *= i
+    assert factorial_100 > 10 ** 157
+
+LARGE NUMBERS IN NUMPY / FIXED-SIZE TYPES
+------------------------------------------
+    import numpy as np
+
+    # Overflow wraps silently in numpy:
+    assert np.int8(127) == 127
+    assert np.int8(128) == -128     # silent overflow — wraps around
+
+    assert np.int32(2147483647) == 2147483647
+    assert np.int32(2147483648) == -2147483648   # wraps
+
+    assert np.uint8(255) == 255
+    assert np.uint8(256) == 0       # wraps to zero
+
+    # Test:
+    def test_numpy_overflow_boundary():
+        assert np.int8(127) == 127
+        assert np.int8(np.int8(127) + np.int8(1)) == -128  # wraps
+
+LARGE NUMBERS AND FLOAT PRECISION LOSS
+----------------------------------------
+When Python int is cast to float, precision is lost beyond 2**53:
+
+    assert 2**53 == float(2**53)        # exact
+    assert 2**53 + 1 != float(2**53 + 1)  # loses the +1
+
+    large = 10**18
+    assert float(large) == 1e18        # may lose precision
+
+    # Safe comparison for large floats:
+    from pytest import approx
+    assert float(10**15) == approx(10**15, rel=1e-9)
+
+LARGE NUMBERS IN STRINGS AND IO
+---------------------------------
+    # JSON has no integer size limit but some parsers cap at int64
+    import json
+    big = 2**63 - 1   # max int64
+    s = json.dumps(big)
+    assert json.loads(s) == big
+
+    # Numbers beyond int64 may lose precision in JSON:
+    too_big = 2**64
+    s = json.dumps(too_big)
+    # some parsers convert to float internally — test explicitly
+
+LARGE COLLECTIONS (PERFORMANCE EDGE)
+--------------------------------------
+    # Not a numerical edge case but related — large numeric datasets
+    big = list(range(10_000_000))
+    assert len(big) == 10_000_000
+    assert big[0] == 0
+    assert big[-1] == 9_999_999
+    assert sum(big) == 49_999_995_000_000
+
+LARGE NUMBERS IN SORTING
+-------------------------
+    large_nums = [10**18, 10**9, 10**15, 0, -10**18]
+    assert sorted(large_nums) == [-10**18, 0, 10**9, 10**15, 10**18]
+
+PYTEST TEST CASES FOR LARGE NUMBERS
+-------------------------------------
+    @pytest.mark.parametrize("n", [
+        10**6,
+        10**9,
+        10**12,
+        10**18,
+        2**53,
+        2**63 - 1,
+    ])
+    def test_large_integer_roundtrip(n):
+        assert int(str(n)) == n   # serialize and deserialize
+
+    def test_factorial_large():
+        import math
+        result = math.factorial(100)
+        assert result > 0
+        assert isinstance(result, int)
+
+    def test_sum_large_list():
+        result = sum(range(1, 1001))
+        assert result == 500500
+
+
+----------------------------------------------------------------
+SECTION 4: FLOAT PRECISION ISSUES
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Floating point numbers in Python follow IEEE 754 double precision.
+They cannot represent most decimal fractions exactly, which leads
+to comparison failures. Never use == to compare floats directly.
+
+WHY FLOATS ARE IMPRECISE
+-------------------------
+    # These all look like they should be exact but are not:
+    assert 0.1 + 0.2 != 0.3          # True — they are NOT equal
+    print(0.1 + 0.2)                  # 0.30000000000000004
+    print(0.1)                        # 0.1 (repr hides imprecision)
+
+    # The actual stored value of 0.1:
+    from decimal import Decimal
+    print(Decimal(0.1))
+    # 0.1000000000000000055511151231257827021181583404541015625
+
+ALWAYS USE pytest.approx FOR FLOAT COMPARISON
+-----------------------------------------------
+    from pytest import approx
+
+    # Basic:
+    assert 0.1 + 0.2 == approx(0.3)
+
+    # Relative tolerance (default 1e-6):
+    assert 1.0000001 == approx(1.0, rel=1e-6)
+
+    # Absolute tolerance:
+    assert 0.0000001 == approx(0.0, abs=1e-6)
+
+    # Works with lists and dicts:
+    assert [0.1, 0.2, 0.3] == approx([0.1, 0.2, 0.3])
+    assert {"x": 0.1, "y": 0.2} == approx({"x": 0.1, "y": 0.2})
+
+    # math.isclose (standard library):
+    import math
+    assert math.isclose(0.1 + 0.2, 0.3, rel_tol=1e-9)
+
+USE decimal FOR EXACT DECIMAL ARITHMETIC
+-----------------------------------------
+    from decimal import Decimal, ROUND_HALF_UP
+
+    a = Decimal("0.1")
+    b = Decimal("0.2")
+    assert a + b == Decimal("0.3")   # exact
+
+    # Rounding:
+    amount = Decimal("2.675")
+    rounded = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    assert rounded == Decimal("2.68")
+
+    # Never initialize Decimal from float — use string:
+    assert Decimal(0.1) != Decimal("0.1")   # float is already imprecise
+    assert Decimal("0.1") == Decimal("0.1") # string is exact
+
+USE fractions FOR EXACT RATIONAL ARITHMETIC
+---------------------------------------------
+    from fractions import Fraction
+
+    assert Fraction(1, 3) + Fraction(2, 3) == 1
+    assert Fraction(1, 10) + Fraction(2, 10) == Fraction(3, 10)
+
+SPECIAL FLOAT VALUES
+---------------------
+    import math
+
+    # Infinity:
+    assert math.inf > 10**308
+    assert -math.inf < -10**308
+    assert math.inf + 1 == math.inf
+    assert math.inf - math.inf != math.inf   # nan
+    assert math.isinf(math.inf)
+    assert math.isinf(-math.inf)
+
+    # NaN — not equal to anything including itself:
+    assert math.nan != math.nan
+    assert not (math.nan == math.nan)
+    assert math.isnan(math.nan)
+    assert math.isnan(float("nan"))
+    assert math.isnan(math.inf - math.inf)
+    assert math.isnan(math.nan + 1)
+    assert math.isnan(math.nan * 0)
+
+    # Operations that produce nan or inf:
+    assert math.isnan(float("nan"))
+    assert math.isinf(float("inf"))
+    assert math.isinf(1e308 * 10)      # overflow to inf
+
+FLOAT ROUNDING SURPRISES
+--------------------------
+    # Python uses banker's rounding (round half to even):
+    assert round(0.5) == 0    # rounds to 0 (even)
+    assert round(1.5) == 2    # rounds to 2 (even)
+    assert round(2.5) == 2    # rounds to 2 (even)
+    assert round(3.5) == 4    # rounds to 4 (even)
+
+    # For traditional rounding use Decimal:
+    from decimal import Decimal, ROUND_HALF_UP
+    def round_half_up(n, decimals=0):
+        d = Decimal(str(n))
+        factor = Decimal("1") / Decimal("10") ** decimals
+        return float(d.quantize(factor, rounding=ROUND_HALF_UP))
+
+    assert round_half_up(0.5) == 1.0
+    assert round_half_up(2.5) == 3.0
+
+PYTEST TEST CASES FOR FLOAT PRECISION
+---------------------------------------
+    import pytest
+    import math
+    from pytest import approx
+
+    @pytest.mark.parametrize("a, b, expected", [
+        (0.1, 0.2, 0.3),
+        (0.7, 0.1, 0.8),
+        (1.005, 0.0, 1.005),
+    ])
+    def test_float_addition(a, b, expected):
+        assert a + b == approx(expected)
+
+    def test_nan_behavior():
+        nan = float("nan")
+        assert math.isnan(nan)
+        assert math.isnan(nan + 1)
+        assert math.isnan(nan * 0)
+
+    def test_inf_behavior():
+        assert math.isinf(float("inf"))
+        assert float("inf") > 10**308
+        assert math.isnan(float("inf") - float("inf"))
+
+    def test_decimal_exact():
+        from decimal import Decimal
+        assert Decimal("0.1") + Decimal("0.2") == Decimal("0.3")
+
+
+----------------------------------------------------------------
+SECTION 5: DIVISION BY ZERO
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Division by zero raises ZeroDivisionError in Python for integers
+and floats. With numpy, behavior differs. Always validate divisors
+before performing division.
+
+INTEGER DIVISION BY ZERO
+-------------------------
+    import pytest
+
+    with pytest.raises(ZeroDivisionError):
+        _ = 1 / 0
+
+    with pytest.raises(ZeroDivisionError):
+        _ = 1 // 0
+
+    with pytest.raises(ZeroDivisionError):
+        _ = 1 % 0
+
+    with pytest.raises(ZeroDivisionError):
+        _ = divmod(1, 0)
+
+FLOAT DIVISION BY ZERO
+-----------------------
+    import pytest
+
+    with pytest.raises(ZeroDivisionError):
+        _ = 1.0 / 0       # int zero as divisor → ZeroDivisionError
+
+    with pytest.raises(ZeroDivisionError):
+        _ = 1.0 / 0.0     # float zero as divisor → ZeroDivisionError
+
+    # Note: numpy behaves differently (returns inf, not ZeroDivisionError):
+    import numpy as np
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = np.float64(1.0) / np.float64(0.0)
+    assert np.isinf(result)
+
+SAFE DIVISION PATTERNS
+-----------------------
+    # Guard before dividing:
+    def safe_divide(a, b):
+        if b == 0:
+            raise ValueError("Divisor cannot be zero")
+        return a / b
+
+    # Return default on zero:
+    def safe_divide_default(a, b, default=None):
+        if b == 0:
+            return default
+        return a / b
+
+    # Return None:
+    def safe_divide_none(a, b):
+        return None if b == 0 else a / b
+
+    # Tests:
+    def test_safe_divide_raises():
+        with pytest.raises(ValueError, match="cannot be zero"):
+            safe_divide(10, 0)
+
+    def test_safe_divide_default():
+        assert safe_divide_default(10, 0, default=0.0) == 0.0
+        assert safe_divide_default(10, 2) == 5.0
+
+    def test_safe_divide_none():
+        assert safe_divide_none(10, 0) is None
+        assert safe_divide_none(10, 2) == 5.0
+
+PERCENTAGE AND RATIO CALCULATIONS
+-----------------------------------
+    # Common in reporting code — denominator may be zero if no data:
+    def compute_rate(successes, total):
+        if total == 0:
+            return 0.0
+        return successes / total
+
+    def test_compute_rate_empty():
+        assert compute_rate(0, 0) == 0.0
+
+    def test_compute_rate_normal():
+        from pytest import approx
+        assert compute_rate(3, 4) == approx(0.75)
+
+    def test_compute_rate_all_success():
+        assert compute_rate(5, 5) == approx(1.0)
+
+DIVISION BY ZERO IN COMPREHENSIONS
+------------------------------------
+    # Error propagates from inside comprehensions too:
+    data = [10, 5, 0, 2]
+
+    import pytest
+    with pytest.raises(ZeroDivisionError):
+        result = [100 / x for x in data]
+
+    # Safe version:
+    result = [100 / x if x != 0 else None for x in data]
+    assert result == [10.0, 20.0, None, 50.0]
+
+PARAMETRIZE PATTERN FOR DIVISION EDGE CASES
+---------------------------------------------
+    @pytest.mark.parametrize("a, b, expected", [
+        (10,  2,  5.0),
+        ( 0,  5,  0.0),
+        (-9,  3, -3.0),
+        ( 7,  2,  3.5),
+    ])
+    def test_divide_valid(a, b, expected):
+        from pytest import approx
+        assert safe_divide(a, b) == approx(expected)
+
+    @pytest.mark.parametrize("a, b", [
+        (1,   0),
+        (0,   0),
+        (-5,  0),
+        (1.0, 0.0),
+    ])
+    def test_divide_by_zero(a, b):
+        with pytest.raises((ZeroDivisionError, ValueError)):
+            safe_divide(a, b)
+
+
+----------------------------------------------------------------
+SECTION 6: OVERFLOW AND UNDERFLOW
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Python's native int never overflows. However overflow and underflow
+occur in: numpy fixed-size arrays, struct packing, C extensions,
+float arithmetic (producing inf or 0.0), and external systems
+(databases, APIs with int32/int64 limits).
+
+PYTHON INT — NO OVERFLOW
+-------------------------
+    # Python int grows arbitrarily — these never raise:
+    assert 2**100 > 0
+    assert 2**1000 > 0
+    assert 2**10000 > 0
+
+    # Very large numbers are slow but correct:
+    import math
+    assert math.factorial(1000) > 0
+
+FLOAT OVERFLOW → INFINITY
+--------------------------
+    import math
+
+    result = 1e308 * 10         # overflows to inf
+    assert math.isinf(result)
+
+    result = float("inf")
+    assert math.isinf(result)
+    assert result > 10**308
+
+    # OverflowError — explicit:
+    with pytest.raises(OverflowError):
+        _ = math.exp(1000)       # too large for float
+
+    # Operations on inf:
+    assert math.inf + 1 == math.inf
+    assert math.inf * 2 == math.inf
+    assert math.isnan(math.inf - math.inf)
+    assert math.isnan(math.inf / math.inf)
+    assert math.inf * 0 != 0            # nan, not 0
+
+FLOAT UNDERFLOW → ZERO
+-----------------------
+    # Subnormal (denormalized) numbers near zero:
+    import sys
+
+    tiny = sys.float_info.min             # smallest normal float ~2.2e-308
+    subnormal = tiny / 2                  # subnormal: ~1.1e-308
+    assert subnormal > 0                  # still positive
+
+    underflow = 1e-308 / 1e200            # underflows to 0.0
+    assert underflow == 0.0
+
+    # Very small arithmetic loses precision:
+    assert 1.0 + 1e-17 == 1.0            # 1e-17 is lost
+
+NUMPY INTEGER OVERFLOW (WRAPS SILENTLY)
+-----------------------------------------
+    import numpy as np
+
+    # int8: -128 to 127
+    assert np.int8(127) == 127
+    assert np.int8(127) + np.int8(1) == -128   # wraps — no error
+
+    # int16: -32768 to 32767
+    assert np.int16(32767) + np.int16(1) == -32768
+
+    # int32: -2147483648 to 2147483647
+    assert np.int32(2147483647) + np.int32(1) == -2147483648
+
+    # int64: -9223372036854775808 to 9223372036854775807
+    assert np.int64(9223372036854775807) + np.int64(1) == -9223372036854775808
+
+    # uint8: 0 to 255
+    assert np.uint8(255) + np.uint8(1) == 0    # wraps to 0
+    assert np.uint8(0) - np.uint8(1) == 255    # underflows to 255
+
+NUMPY FLOAT OVERFLOW / UNDERFLOW
+----------------------------------
+    import numpy as np
+    import warnings
+
+    # Overflow:
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        result = np.float32(3.4e38) * np.float32(10)
+        assert np.isinf(result)
+
+    # Underflow:
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        result = np.float32(1e-38) / np.float32(1e20)
+        assert result == 0.0 or np.isfinite(result)
+
+STRUCT PACK OVERFLOW
+---------------------
+    import struct
+    import pytest
+
+    # struct enforces size limits:
+    with pytest.raises(struct.error):
+        struct.pack("B", 256)     # uint8 max is 255
+
+    with pytest.raises(struct.error):
+        struct.pack("b", 128)     # int8 max is 127
+
+    with pytest.raises(struct.error):
+        struct.pack("H", 65536)   # uint16 max is 65535
+
+    assert struct.pack("B", 255) == b"\xff"
+    assert struct.pack("B", 0)   == b"\x00"
+
+BOUNDARY VALUES FOR COMMON INTEGER TYPES
+-----------------------------------------
+    INT8_MIN,  INT8_MAX  = -128,         127
+    INT16_MIN, INT16_MAX = -32768,       32767
+    INT32_MIN, INT32_MAX = -2147483648,  2147483647
+    INT64_MIN, INT64_MAX = -9223372036854775808, 9223372036854775807
+    UINT8_MAX  = 255
+    UINT16_MAX = 65535
+    UINT32_MAX = 4294967295
+    UINT64_MAX = 18446744073709551615
+
+    @pytest.mark.parametrize("value, dtype, expected", [
+        (127,  np.int8,  127),
+        (128,  np.int8,  -128),    # overflow
+        (255,  np.uint8, 255),
+        (256,  np.uint8, 0),       # overflow
+    ])
+    def test_numpy_overflow_boundaries(value, dtype, expected):
+        import numpy as np
+        result = dtype(value)
+        assert result == expected
+
+SAFE OVERFLOW DETECTION PATTERN
+---------------------------------
+    import sys
+
+    INT64_MAX = 9223372036854775807
+    INT64_MIN = -9223372036854775808
+
+    def safe_int64_add(a, b):
+        result = a + b       # Python int is safe here
+        if result > INT64_MAX or result < INT64_MIN:
+            raise OverflowError(f"Result {result} exceeds int64 range")
+        return result
+
+    def test_int64_overflow_detection():
+        with pytest.raises(OverflowError):
+            safe_int64_add(INT64_MAX, 1)
+
+        assert safe_int64_add(INT64_MAX - 1, 1) == INT64_MAX
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+ZERO
+    falsy:          0, 0.0, 0j all falsy — use "is not None"
+    arithmetic:     0**0 == 1; -0 == 0; -0.0 == 0.0
+    modulo:         0 % 5 == 0; 5 % 0 → ZeroDivisionError
+    in collections: [0] is truthy; sum([0,0]) == 0
+
+NEGATIVE NUMBERS
+    modulo:         -7 % 3 == 2 (Python floors toward -inf)
+    floor div:      -7 // 3 == -3 (floors, not truncates)
+    indices:        lst[-1] is last; lst[-n-1] → IndexError
+    domain errors:  sqrt(-1) → ValueError; use cmath for complex
+
+LARGE NUMBERS
+    Python int:     arbitrary precision, never overflows
+    float limits:   beyond 2**53, integers lose precision as float
+    numpy int8:     -128..127; int32: ~-2.1B..2.1B; wraps silently
+    struct:         enforces hard limits; raises struct.error
+
+FLOAT PRECISION
+    never use ==:   use pytest.approx or math.isclose
+    approx:         assert 0.1+0.2 == approx(0.3)
+    exact decimal:  use Decimal("0.1") not Decimal(0.1)
+    NaN:            nan != nan; use math.isnan(x)
+    Inf:            math.isinf(x); inf-inf == nan
+    rounding:       Python uses banker's rounding (half-to-even)
+
+DIVISION BY ZERO
+    int/float:      1/0 → ZeroDivisionError
+    numpy:          np.float64(1)/np.float64(0) → inf (no error)
+    guard pattern:  check b == 0 before dividing
+    safe patterns:  return None, return default, raise ValueError
+
+OVERFLOW / UNDERFLOW
+    Python int:     never overflows
+    float overflow: 1e308*10 → inf
+    float underflow:1e-308/1e200 → 0.0 (subnormal)
+    numpy:          wraps silently on int overflow
+    struct:         raises struct.error on overflow
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

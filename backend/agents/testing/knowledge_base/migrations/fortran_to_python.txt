@@ -1,0 +1,475 @@
+================================================================
+FORTRAN TO PYTHON CONVERSION - TEST CASE KNOWLEDGE BASE
+================================================================
+Reference for building Python test cases that validate code
+converted from Fortran. Covers floating point precision, array
+indexing differences, and scientific computation correctness.
+All examples use Python (pytest). NumPy is assumed for array work.
+================================================================
+
+CONTEXT FOR TEST CASE AGENT
+-----------------------------
+Fortran is the dominant language for scientific and numerical
+computing. Code converted from Fortran to Python is almost always
+used in HPC, physics simulations, climate models, and engineering.
+Numerical correctness is paramount — small floating point or
+index errors cause silently wrong results, not crashes.
+
+
+----------------------------------------------------------------
+SECTION 1: FLOATING POINT PRECISION CRITICAL
+----------------------------------------------------------------
+
+WHAT FORTRAN DOES
+-----------------
+Fortran uses REAL (32-bit) and DOUBLE PRECISION / REAL(8) (64-bit)
+explicitly. Scientific Fortran code almost always uses DOUBLE
+PRECISION for accuracy. Fortran intrinsics like SQRT, EXP, SIN
+operate at the declared type's precision.
+
+    ! Fortran:
+    REAL(8) :: x = 1.0D0 / 3.0D0   ! 64-bit double, D0 = double literal
+    REAL(4) :: y = 1.0 / 3.0         ! 32-bit float
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python float is always 64-bit double (same as Fortran REAL(8)).
+NumPy has float32, float64, float128 etc. Converted code must
+ensure NumPy dtype matches original Fortran precision.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. Fortran REAL(4) code converted to Python float gives more precision —
+   results differ slightly from original
+2. Fortran DOUBLE PRECISION literals (1.0D0) converted to Python float
+   are fine, but REAL(4) converted to float32 may differ
+3. Accumulation errors in loops — Fortran order-of-operations preserved?
+4. Fortran PARAMETER constants converted with wrong precision
+5. Mixed precision arithmetic in Fortran → single type in Python
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+    import math
+    import numpy as np
+    from pytest import approx
+
+    # Test 1: basic float precision — Python float is 64-bit
+    def test_python_float_is_double_precision():
+        import sys
+        assert sys.float_info.mant_dig == 53   # 53 bits of mantissa
+        assert sys.float_info.max > 1e308
+
+    # Test 2: numpy dtype matches Fortran declaration
+    # Fortran REAL(8) / DOUBLE PRECISION → numpy float64
+    def test_array_dtype_is_float64():
+        arr = np.array([1.0, 2.0, 3.0])
+        assert arr.dtype == np.float64     # default in NumPy
+
+    def test_array_dtype_float32_explicit():
+        arr = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        assert arr.dtype == np.float32
+
+    # Test 3: accumulation — sum of many small floats
+    def test_summation_order_sensitivity():
+        # Fortran and Python may accumulate in different orders
+        # Test that result is within acceptable tolerance
+        N = 1_000_000
+        result = sum(1.0 / N for _ in range(N))
+        assert result == approx(1.0, rel=1e-10)
+
+    def test_numpy_sum_matches_math_sum():
+        arr = np.ones(10000, dtype=np.float64) * 0.0001
+        np_sum = np.sum(arr)
+        py_sum = sum(float(x) for x in arr)
+        assert np_sum == approx(py_sum, rel=1e-10)
+
+    # Test 4: specific double precision constants
+    PI_FORTRAN = 3.141592653589793238   # Fortran: ACOS(-1.0D0)
+    E_FORTRAN  = 2.718281828459045235
+
+    def test_pi_precision():
+        assert math.pi == approx(PI_FORTRAN, rel=1e-15)
+
+    def test_e_precision():
+        assert math.e == approx(E_FORTRAN, rel=1e-15)
+
+    # Test 5: intrinsic functions — Fortran SQRT, EXP, LOG, SIN, COS
+    @pytest.mark.parametrize("x, fortran_result", [
+        (4.0,          2.0),
+        (2.0,          1.4142135623730951),
+        (9.0,          3.0),
+        (0.0,          0.0),
+    ])
+    def test_sqrt_matches_fortran(x, fortran_result):
+        assert math.sqrt(x) == approx(fortran_result, rel=1e-14)
+
+    @pytest.mark.parametrize("x, expected", [
+        (0.0,          1.0),
+        (1.0,          math.e),
+        (-1.0,         1/math.e),
+    ])
+    def test_exp_precision(x, expected):
+        assert math.exp(x) == approx(expected, rel=1e-14)
+
+    # Test 6: Fortran MOD vs Python % — differ for negatives
+    # Fortran MOD(a, p) has same sign as a (dividend)
+    # Python a % p has same sign as p (divisor)
+    @pytest.mark.parametrize("a, p, fortran_mod, python_mod", [
+        ( 7,  3,  1,  1),
+        (-7,  3, -1,  2),   # DIFFER
+        ( 7, -3,  1, -2),   # DIFFER
+        (-7, -3, -1, -1),
+    ])
+    def test_fortran_mod_vs_python_mod(a, p, fortran_mod, python_mod):
+        assert a % p == python_mod
+        # Fortran-equivalent:
+        assert int(math.fmod(a, p)) == fortran_mod
+
+    def fortran_mod(a, p):
+        return math.fmod(a, p)
+
+    # Test 7: underflow and overflow same as Fortran
+    def test_float_overflow_to_inf():
+        result = 1e308 * 10
+        assert math.isinf(result)
+
+    def test_float_underflow_to_zero():
+        result = 1e-308 / 1e100
+        assert result == 0.0 or result < 1e-400
+
+    # Test 8: comparison of floating point results — always use tolerance
+    @pytest.mark.parametrize("a, b, tolerance", [
+        (0.1 + 0.2,    0.3,    1e-15),
+        (math.sin(0),  0.0,    1e-15),
+        (math.cos(0),  1.0,    1e-15),
+        (math.sin(math.pi), 0.0, 1e-14),
+    ])
+    def test_trig_precision(a, b, tolerance):
+        assert abs(a - b) < tolerance
+
+
+----------------------------------------------------------------
+SECTION 2: ARRAY INDEXING DIFFERENCES
+----------------------------------------------------------------
+
+WHAT FORTRAN DOES
+-----------------
+Fortran arrays are 1-based by default. The first element is
+arr(1), not arr(0). Fortran also supports custom lower bounds
+(arr(0:n), arr(-5:5)) and column-major (Fortran) vs row-major
+(C/Python) storage order.
+
+    ! Fortran:
+    INTEGER :: arr(5)        ! indices 1..5
+    arr(1) = 10              ! first element
+    arr(5) = 50              ! last element
+    arr(6) = 99              ! out of bounds — Fortran may not check!
+
+    REAL(8) :: matrix(3, 4)  ! 3 rows, 4 cols, COLUMN-MAJOR
+    matrix(1, 1) = 1.0       ! row 1, col 1
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python lists and NumPy arrays are 0-based. First element is
+arr[0], last is arr[-1] or arr[n-1]. NumPy default is row-major
+(C order). NumPy can use Fortran order with order='F'.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. Off-by-one throughout — every index is shifted by -1
+2. Last element: Fortran arr(n) → Python arr[n-1]
+3. Loop bounds: Fortran DO i=1,N → Python for i in range(N)
+   (range(1, N+1) would be wrong for 0-based indexing)
+4. Matrix storage: Fortran column-major vs Python row-major
+   — transposing when not needed, or not transposing when needed
+5. Multi-dimensional indexing: Fortran (row, col) → Python [row][col]
+   but memory layout differs
+6. Custom Fortran lower bounds (arr(0:n)) are common in scientific code
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+    import numpy as np
+
+    # Test 1: 1-based → 0-based index shift
+    def test_first_element_is_index_zero():
+        arr = [10, 20, 30, 40, 50]
+        # Fortran: arr(1) = 10 → Python: arr[0] = 10
+        assert arr[0] == 10
+
+    def test_last_element_is_index_n_minus_one():
+        arr = [10, 20, 30, 40, 50]
+        n = len(arr)
+        # Fortran: arr(n) = 50 → Python: arr[n-1] = 50
+        assert arr[n - 1] == 50
+        assert arr[-1] == 50
+
+    # Test 2: loop equivalence — Fortran DO i=1,N → Python for i in range(N)
+    @pytest.mark.parametrize("N", [1, 5, 10, 100])
+    def test_loop_count_matches(N):
+        # Fortran: DO i=1,N gives N iterations
+        fortran_count = N
+        python_count = len(range(N))   # range(N) gives N iterations (0..N-1)
+        assert python_count == fortran_count
+
+    def test_loop_sum_equivalence():
+        N = 10
+        # Fortran: sum = 0; DO i=1,N; sum = sum + i; ENDDO → sum=55
+        fortran_sum = sum(range(1, N + 1))   # 1+2+...+10
+        # Python converted with 0-based loop:
+        python_sum = sum(range(N))            # 0+1+...+9 = 45 — WRONG if not adjusted
+        assert fortran_sum == 55
+        assert python_sum == 45    # documents the difference
+
+    # Test 3: do-loop index used as array index — shift by 1
+    def test_array_filled_by_loop():
+        N = 5
+        arr = [0] * N
+        # Fortran: DO i=1,N; arr(i) = i*2; → arr = [2,4,6,8,10]
+        # Python converted correctly (0-based):
+        for i in range(N):
+            arr[i] = (i + 1) * 2    # i+1 to replicate Fortran's 1-based i
+        assert arr == [2, 4, 6, 8, 10]
+
+    def test_array_filled_naive_wrong():
+        # Common conversion mistake: forgetting +1 offset
+        N = 5
+        arr = [0] * N
+        for i in range(N):
+            arr[i] = i * 2           # 0,2,4,6,8 — Fortran would give 2,4,6,8,10
+        assert arr == [0, 2, 4, 6, 8]   # documents the WRONG result
+
+    # Test 4: 2D array indexing — Fortran (row,col) 1-based → NumPy [row-1,col-1]
+    def test_matrix_element_access():
+        # Fortran: matrix(2,3) = element at row 2, col 3
+        # NumPy (row-major): matrix[1, 2] — subtract 1 from each
+        matrix = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+        # Fortran matrix(2,3) → Python matrix[1, 2]
+        assert matrix[1, 2] == 6    # row index 1, col index 2
+
+    # Test 5: Fortran column-major vs Python row-major
+    def test_fortran_order_array():
+        # Fortran stores matrix column by column (column-major)
+        # NumPy stores row by row (row-major) by default
+        # For Fortran-compatible memory layout, use order='F'
+        arr_c = np.array([[1, 2], [3, 4]], order='C')   # row-major
+        arr_f = np.array([[1, 2], [3, 4]], order='F')   # column-major
+
+        # Values are the same — layout differs
+        assert arr_c[0, 0] == arr_f[0, 0] == 1
+        assert arr_c[0, 1] == arr_f[0, 1] == 2
+
+        # Memory layout flag:
+        assert arr_c.flags['C_CONTIGUOUS'] is True
+        assert arr_f.flags['F_CONTIGUOUS'] is True
+
+    # Test 6: boundary — out of bounds raises IndexError (Fortran may not)
+    def test_out_of_bounds_raises():
+        arr = np.array([1, 2, 3, 4, 5])
+        with pytest.raises(IndexError):
+            _ = arr[5]    # 0-based: valid indices 0..4
+        with pytest.raises(IndexError):
+            _ = arr[-6]   # negative: valid -5..-1
+
+    # Test 7: custom lower bound — Fortran arr(0:N-1) → Python arr[0:N]
+    @pytest.mark.parametrize("lower, upper", [
+        (0, 9),
+        (1, 10),
+        (-5, 5),
+    ])
+    def test_fortran_custom_bounds_as_slice(lower, upper):
+        # Fortran arr(lower:upper) has upper-lower+1 elements
+        size = upper - lower + 1
+        arr = list(range(lower, upper + 1))
+        assert len(arr) == size
+        assert arr[0] == lower
+        assert arr[-1] == upper
+
+    # Test 8: reshape and transpose — Fortran to Python matrix ops
+    def test_matrix_transpose():
+        A = np.array([[1, 2, 3], [4, 5, 6]])   # shape (2, 3)
+        AT = A.T                                  # shape (3, 2)
+        assert AT.shape == (3, 2)
+        assert AT[0, 0] == A[0, 0]
+        assert AT[1, 0] == A[0, 1]
+        assert AT[2, 1] == A[1, 2]
+
+
+----------------------------------------------------------------
+SECTION 3: SCIENTIFIC COMPUTATIONS
+----------------------------------------------------------------
+
+WHAT FORTRAN DOES
+-----------------
+Fortran's primary purpose is scientific computing. Converted code
+typically includes numerical methods: ODE solvers, matrix
+operations, FFTs, linear algebra, iterative solvers. Results must
+match Fortran output to within expected floating point tolerance.
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+    import math
+    import numpy as np
+    from pytest import approx
+
+    # Test 1: dot product — fundamental in linear algebra
+    def dot_product(a, b):
+        return sum(x * y for x, y in zip(a, b))
+
+    @pytest.mark.parametrize("a, b, expected", [
+        ([1, 0, 0], [1, 0, 0], 1.0),
+        ([1, 0, 0], [0, 1, 0], 0.0),
+        ([1, 2, 3], [4, 5, 6], 32.0),
+        ([0, 0, 0], [1, 2, 3], 0.0),
+    ])
+    def test_dot_product(a, b, expected):
+        assert dot_product(a, b) == approx(expected, rel=1e-14)
+
+    def test_numpy_dot_matches_manual():
+        a = np.array([1.0, 2.0, 3.0])
+        b = np.array([4.0, 5.0, 6.0])
+        assert np.dot(a, b) == approx(32.0)
+        assert np.dot(a, b) == approx(dot_product(a.tolist(), b.tolist()))
+
+    # Test 2: matrix multiplication correctness
+    def test_matmul_correctness():
+        A = np.array([[1.0, 2.0], [3.0, 4.0]])
+        B = np.array([[5.0, 6.0], [7.0, 8.0]])
+        C = A @ B
+        assert C[0, 0] == approx(19.0)
+        assert C[0, 1] == approx(22.0)
+        assert C[1, 0] == approx(43.0)
+        assert C[1, 1] == approx(50.0)
+
+    # Test 3: numerical integration (Fortran DO-loop → Python sum)
+    def trapezoidal_rule(f, a, b, n):
+        h = (b - a) / n
+        total = 0.5 * (f(a) + f(b))
+        for i in range(1, n):
+            total += f(a + i * h)
+        return total * h
+
+    def test_trapezoidal_integral_sin():
+        # Integral of sin(x) from 0 to pi = 2
+        result = trapezoidal_rule(math.sin, 0, math.pi, 10000)
+        assert result == approx(2.0, rel=1e-6)
+
+    def test_trapezoidal_integral_x_squared():
+        # Integral of x^2 from 0 to 1 = 1/3
+        result = trapezoidal_rule(lambda x: x**2, 0, 1, 10000)
+        assert result == approx(1/3, rel=1e-6)
+
+    # Test 4: Newton's method — common in Fortran engineering code
+    def newton_sqrt(x, tol=1e-12, max_iter=100):
+        if x < 0:
+            raise ValueError("Cannot take sqrt of negative number")
+        if x == 0:
+            return 0.0
+        guess = x / 2.0
+        for _ in range(max_iter):
+            new_guess = 0.5 * (guess + x / guess)
+            if abs(new_guess - guess) < tol:
+                return new_guess
+            guess = new_guess
+        raise RuntimeError("Newton's method did not converge")
+
+    @pytest.mark.parametrize("x", [1.0, 2.0, 4.0, 9.0, 100.0, 0.25])
+    def test_newton_sqrt(x):
+        result = newton_sqrt(x)
+        assert result == approx(math.sqrt(x), rel=1e-11)
+
+    def test_newton_sqrt_zero():
+        assert newton_sqrt(0) == 0.0
+
+    def test_newton_sqrt_negative_raises():
+        with pytest.raises(ValueError):
+            newton_sqrt(-1.0)
+
+    # Test 5: linear system solve — Ax = b
+    def test_linear_system_solve():
+        A = np.array([[2.0, 1.0], [1.0, 3.0]])
+        b = np.array([5.0, 10.0])
+        x = np.linalg.solve(A, b)
+        # Verify: Ax = b
+        residual = np.dot(A, x) - b
+        assert np.max(np.abs(residual)) < 1e-12
+
+    # Test 6: eigenvalues — common in physics/engineering
+    def test_eigenvalues_symmetric():
+        A = np.array([[4.0, 1.0], [1.0, 3.0]])
+        eigenvalues, _ = np.linalg.eigh(A)   # eigh for symmetric
+        eigenvalues = np.sort(eigenvalues)
+        # Characteristic polynomial: λ² - 7λ + 11 = 0
+        # λ = (7 ± sqrt(5)) / 2
+        expected = sorted([(7 - math.sqrt(5))/2, (7 + math.sqrt(5))/2])
+        assert eigenvalues[0] == approx(expected[0], rel=1e-12)
+        assert eigenvalues[1] == approx(expected[1], rel=1e-12)
+
+    # Test 7: FFT — common in signal processing Fortran
+    def test_fft_roundtrip():
+        signal = np.array([1.0, 2.0, 3.0, 4.0])
+        spectrum = np.fft.fft(signal)
+        recovered = np.fft.ifft(spectrum).real
+        assert recovered == approx(signal.tolist(), rel=1e-12)
+
+    # Test 8: physical constant precision
+    def test_physical_constants():
+        SPEED_OF_LIGHT   = 299792458.0     # m/s — exact by definition
+        PLANCK_CONSTANT  = 6.62607015e-34  # J·s — exact since 2019
+        BOLTZMANN        = 1.380649e-23    # J/K — exact since 2019
+
+        assert SPEED_OF_LIGHT == approx(2.99792458e8, rel=1e-12)
+        assert PLANCK_CONSTANT == approx(6.62607015e-34, rel=1e-12)
+        assert BOLTZMANN == approx(1.380649e-23, rel=1e-12)
+
+    # Test 9: convergence criterion for iterative solver
+    def test_convergence_tolerance():
+        TOL = 1e-10
+        prev, curr = 1.0, 0.9999999999
+        residual = abs(curr - prev)
+        assert residual < TOL    # converged
+
+        prev, curr = 1.0, 0.999
+        residual = abs(curr - prev)
+        assert residual >= TOL   # not yet converged
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+FLOATING POINT PRECISION
+    Python float = Fortran REAL(8) = 64-bit double — same precision
+    Fortran REAL(4) → use numpy float32 explicitly for fidelity
+    Fortran MOD(a,p) → Python math.fmod(a,p) (sign = dividend)
+    Python a % p → sign = divisor — DIFFERENT for negatives
+    Always use approx() or abs(a-b) < tol — never == for floats
+    Tolerance: rel=1e-14 for double, rel=1e-6 for float32
+    Accumulation: test sum over N>>1 terms against known result
+    NaN/Inf: same rules as Python — propagates through arithmetic
+
+ARRAY INDEXING
+    Fortran 1-based → Python 0-based — ALL indices shift by -1
+    Fortran arr(1)   → Python arr[0]
+    Fortran arr(N)   → Python arr[N-1] or arr[-1]
+    Fortran DO i=1,N → Python range(N) with offset +1 inside loop
+    Fortran column-major → NumPy row-major (C order default)
+    NumPy order='F' for Fortran-compatible memory layout
+    Out of bounds: Fortran may not catch; Python raises IndexError
+    2D: Fortran mat(row,col) → Python mat[row-1, col-1]
+    Reshape: np.reshape with order='F' for Fortran-compatible
+
+SCIENTIFIC COMPUTATIONS
+    dot product:    np.dot(a, b) — test against manual sum
+    matmul:         A @ B or np.matmul — test element by element
+    linear system:  np.linalg.solve — verify Ax-b residual < 1e-12
+    integration:    trapezoidal/Simpson — test against known integrals
+    FFT:            np.fft.fft → test roundtrip fft+ifft ≈ original
+    eigenvalues:    np.linalg.eigh for symmetric — test characteristic eq
+    convergence:    test residual < tolerance AND that it does converge
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

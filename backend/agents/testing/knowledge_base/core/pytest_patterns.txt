@@ -1,0 +1,543 @@
+================================================================
+PYTEST PATTERNS - KNOWLEDGE BASE
+================================================================
+A comprehensive reference for pytest covering basics, assertions,
+parametrize, and pytest.raises. Intended for use as a RAG source.
+================================================================
+
+
+----------------------------------------------------------------
+SECTION 1: PYTEST BASICS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+pytest is a Python testing framework that makes it easy to write
+simple and scalable test cases. It requires no boilerplate and
+uses plain assert statements.
+
+Install:
+    pip install pytest
+
+Run all tests:
+    pytest
+
+Run with verbose output:
+    pytest -v
+
+Run a specific file:
+    pytest test_math.py
+
+Run a specific test function:
+    pytest test_math.py::test_addition
+
+Run tests matching a keyword:
+    pytest -k "addition"
+
+Run tests matching a marker:
+    pytest -m slow
+
+
+FILE AND FUNCTION NAMING CONVENTIONS
+-------------------------------------
+- Test files must be named: test_*.py  OR  *_test.py
+- Test functions must start with: test_
+- Test classes must start with: Test (and must NOT have an __init__)
+- Test methods inside a class must start with: test_
+
+Example:
+    # file: test_calculator.py
+
+    def test_addition():
+        assert 1 + 1 == 2
+
+    class TestMultiply:
+        def test_positive(self):
+            assert 3 * 4 == 12
+
+        def test_negative(self):
+            assert -2 * 3 == -6
+
+
+FIXTURES
+--------
+Fixtures provide reusable setup/teardown logic via dependency injection.
+Declare with @pytest.fixture and pass as function arguments.
+
+    import pytest
+
+    @pytest.fixture
+    def sample_user():
+        return {"name": "Alice", "age": 30}
+
+    def test_user_name(sample_user):
+        assert sample_user["name"] == "Alice"
+
+Fixture scope controls how often the fixture is created:
+    @pytest.fixture(scope="function")   # default, once per test
+    @pytest.fixture(scope="class")      # once per test class
+    @pytest.fixture(scope="module")     # once per test file
+    @pytest.fixture(scope="session")    # once per entire test run
+
+Fixtures can depend on other fixtures:
+    @pytest.fixture
+    def db_connection():
+        conn = create_connection()
+        yield conn
+        conn.close()
+
+    @pytest.fixture
+    def user_repo(db_connection):
+        return UserRepository(db_connection)
+
+Use yield for teardown logic (code after yield runs after the test):
+    @pytest.fixture
+    def temp_file(tmp_path):
+        f = tmp_path / "data.txt"
+        f.write_text("hello")
+        yield f
+        f.unlink()  # cleanup
+
+
+CONFTEST.PY
+-----------
+Shared fixtures go in conftest.py. pytest discovers it automatically.
+No import needed — fixtures are injected by name.
+
+    # conftest.py
+    import pytest
+
+    @pytest.fixture
+    def app_config():
+        return {"debug": True, "db": "sqlite:///:memory:"}
+
+
+MARKERS
+-------
+Markers tag tests for selective running or special behavior.
+
+Built-in markers:
+    @pytest.mark.skip(reason="not implemented yet")
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires 3.9+")
+    @pytest.mark.xfail(reason="known bug")
+    @pytest.mark.slow  # custom marker
+
+Custom markers must be registered in pytest.ini or pyproject.toml:
+    [pytest]
+    markers =
+        slow: marks tests as slow
+        integration: marks integration tests
+
+Run only marked tests:
+    pytest -m slow
+    pytest -m "not slow"
+
+
+CONFIGURATION (pytest.ini / pyproject.toml)
+--------------------------------------------
+    # pytest.ini
+    [pytest]
+    testpaths = tests
+    addopts = -v --tb=short
+    markers =
+        slow: slow tests
+        integration: integration tests
+
+    # pyproject.toml
+    [tool.pytest.ini_options]
+    testpaths = ["tests"]
+    addopts = "-v --tb=short"
+
+
+----------------------------------------------------------------
+SECTION 2: ASSERTIONS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+pytest rewrites plain assert statements to produce detailed failure
+messages. No need for assertEqual, assertTrue, etc.
+
+BASIC EQUALITY AND IDENTITY
+-----------------------------
+    assert x == 42
+    assert x != 0
+    assert obj is None
+    assert obj is not None
+    assert a is b            # same object in memory
+
+BOOLEAN ASSERTIONS
+------------------
+    assert is_valid
+    assert not is_empty
+    assert flag is True
+    assert flag is False
+
+COMPARISON OPERATORS
+---------------------
+    assert score >= 90
+    assert price < 100.0
+    assert 0.0 < ratio <= 1.0
+    assert len(items) > 0
+
+MEMBERSHIP
+----------
+    assert "hello" in result
+    assert key in dictionary
+    assert item not in blacklist
+    assert 3 in [1, 2, 3]
+
+TYPE CHECKING
+-------------
+    assert isinstance(val, int)
+    assert isinstance(val, (int, float))
+    assert type(val) is str      # strict type, no subclasses
+
+COLLECTION EQUALITY
+--------------------
+    assert result == [1, 2, 3]
+    assert data == {"key": "value"}
+    assert flags == {"read", "write"}
+
+    # order-independent list comparison:
+    assert sorted(result) == sorted(expected)
+
+    # subset check:
+    assert {"a": 1}.items() <= full_dict.items()
+
+APPROXIMATE FLOAT COMPARISON
+------------------------------
+Never use == for floats. Use pytest.approx:
+
+    from pytest import approx
+
+    assert 0.1 + 0.2 == approx(0.3)
+    assert result == approx(3.14159, rel=1e-4)   # relative tolerance
+    assert result == approx(0.001, abs=1e-6)      # absolute tolerance
+
+    # works with lists and dicts too:
+    assert [0.1, 0.2] == approx([0.1, 0.2])
+    assert {"x": 0.1} == approx({"x": 0.1})
+
+STRING ASSERTIONS
+-----------------
+    assert result.startswith("Hello")
+    assert result.endswith("world")
+    assert "error" in message.lower()
+
+    # regex matching:
+    import re
+    assert re.search(r"\d{3}-\d{4}", phone_number)
+
+ASSERTION MESSAGES
+------------------
+Add a custom message to assert for better debugging:
+
+    assert result == expected, f"Expected {expected}, got {result}"
+    assert len(items) > 0, "List should not be empty"
+
+FAILURE OUTPUT EXAMPLE
+-----------------------
+pytest shows a rich diff on failure:
+
+    # code:
+    assert [1, 2, 3] == [1, 2, 4]
+
+    # output:
+    AssertionError: assert [1, 2, 3] == [1, 2, 4]
+      At index 2 diff: 3 != 4
+
+
+----------------------------------------------------------------
+SECTION 3: PARAMETRIZE
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+@pytest.mark.parametrize runs the same test function multiple times
+with different inputs. It avoids code duplication and clearly
+separates test data from test logic.
+
+BASIC USAGE
+-----------
+    import pytest
+
+    @pytest.mark.parametrize("x, expected", [
+        (2, 4),
+        (3, 9),
+        (4, 16),
+    ])
+    def test_square(x, expected):
+        assert x ** 2 == expected
+
+This generates 3 separate tests:
+    test_square[2-4]
+    test_square[3-9]
+    test_square[4-16]
+
+SINGLE PARAMETER
+----------------
+    @pytest.mark.parametrize("value", [0, -1, 100, 9999])
+    def test_is_integer(value):
+        assert isinstance(value, int)
+
+MULTIPLE PARAMETERS (tuple unpacking)
+--------------------------------------
+    @pytest.mark.parametrize("a, b, expected", [
+        (1, 2, 3),
+        (0, 0, 0),
+        (-1, 1, 0),
+        (100, 200, 300),
+    ])
+    def test_add(a, b, expected):
+        assert a + b == expected
+
+CUSTOM TEST IDS
+---------------
+Use ids= to label each test case for readable output:
+
+    @pytest.mark.parametrize("val, expected", [
+        (0, True),
+        (1, False),
+        (-1, False),
+    ], ids=["zero", "one", "negative"])
+    def test_is_zero(val, expected):
+        assert (val == 0) == expected
+
+Or use pytest.param for per-case ids and marks:
+    @pytest.mark.parametrize("x, expected", [
+        pytest.param(2, 4, id="two"),
+        pytest.param(3, 9, id="three"),
+    ])
+    def test_square(x, expected):
+        assert x ** 2 == expected
+
+SKIPPING OR XFAIL ON SPECIFIC CASES
+-------------------------------------
+    @pytest.mark.parametrize("x, expected", [
+        (2, 4),
+        pytest.param(0, 0, marks=pytest.mark.skip(reason="edge case")),
+        pytest.param(-1, 1, marks=pytest.mark.xfail(reason="known bug")),
+    ])
+    def test_square(x, expected):
+        assert x ** 2 == expected
+
+STACKING PARAMETRIZE (cartesian product)
+-----------------------------------------
+Multiple @parametrize decorators produce all combinations:
+
+    @pytest.mark.parametrize("x", [1, 2])
+    @pytest.mark.parametrize("y", [10, 20])
+    def test_multiply(x, y):
+        assert x * y > 0
+
+Generates 4 tests: (1,10), (1,20), (2,10), (2,20)
+
+PARAMETRIZE WITH FIXTURES
+--------------------------
+Parametrize and fixtures can be combined:
+
+    @pytest.fixture
+    def multiplier():
+        return 3
+
+    @pytest.mark.parametrize("value, expected", [
+        (2, 6),
+        (4, 12),
+    ])
+    def test_multiply(value, expected, multiplier):
+        assert value * multiplier == expected
+
+PARAMETRIZE WITH COMPLEX OBJECTS
+----------------------------------
+    import pytest
+    from dataclasses import dataclass
+
+    @dataclass
+    class Case:
+        input: str
+        expected: int
+
+    cases = [
+        Case(input="hello", expected=5),
+        Case(input="hi", expected=2),
+        Case(input="", expected=0),
+    ]
+
+    @pytest.mark.parametrize("case", cases, ids=[c.input or "empty" for c in cases])
+    def test_string_length(case):
+        assert len(case.input) == case.expected
+
+INDIRECT PARAMETRIZE
+---------------------
+Pass parameter values through a fixture using indirect=True:
+
+    @pytest.fixture
+    def user(request):
+        role = request.param
+        return {"role": role, "active": True}
+
+    @pytest.mark.parametrize("user", ["admin", "editor", "viewer"], indirect=True)
+    def test_user_is_active(user):
+        assert user["active"] is True
+
+
+----------------------------------------------------------------
+SECTION 4: PYTEST.RAISES
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+pytest.raises is a context manager that asserts a specific exception
+is raised. The test fails if the exception is NOT raised.
+
+BASIC USAGE
+-----------
+    import pytest
+
+    def test_divide_by_zero():
+        with pytest.raises(ZeroDivisionError):
+            result = 1 / 0
+
+CHECKING THE EXCEPTION MESSAGE
+--------------------------------
+Capture the exception info with "as exc_info":
+
+    def test_value_error_message():
+        with pytest.raises(ValueError) as exc_info:
+            raise ValueError("invalid input")
+
+        assert "invalid" in str(exc_info.value)
+
+exc_info attributes:
+    exc_info.type       # the exception class
+    exc_info.value      # the exception instance
+    exc_info.traceback  # the traceback
+
+MATCH PARAMETER (regex on message)
+------------------------------------
+The match= argument applies a regex search to the string
+representation of the exception:
+
+    def test_error_pattern():
+        with pytest.raises(ValueError, match=r"invalid.*input"):
+            raise ValueError("invalid user input")
+
+    def test_key_error():
+        with pytest.raises(KeyError, match="missing_key"):
+            d = {}
+            _ = d["missing_key"]
+
+MULTIPLE EXCEPTION TYPES
+-------------------------
+Pass a tuple to accept any of several exception types:
+
+    def test_type_or_value_error():
+        with pytest.raises((TypeError, ValueError)):
+            int("not a number here")
+
+COMBINING WITH PARAMETRIZE
+---------------------------
+    import pytest
+
+    def parse_age(value):
+        age = int(value)
+        if age < 0:
+            raise ValueError("Age cannot be negative")
+        return age
+
+    @pytest.mark.parametrize("bad_input, exc_type, match", [
+        ("abc",  ValueError, "invalid literal"),
+        ("-5",   ValueError, "cannot be negative"),
+        (None,   TypeError,  "int\\(\\) argument"),
+    ])
+    def test_parse_age_errors(bad_input, exc_type, match):
+        with pytest.raises(exc_type, match=match):
+            parse_age(bad_input)
+
+CHECKING EXCEPTION ATTRIBUTES
+-------------------------------
+    class AppError(Exception):
+        def __init__(self, message, code):
+            super().__init__(message)
+            self.code = code
+
+    def test_custom_exception_code():
+        with pytest.raises(AppError) as exc_info:
+            raise AppError("not found", code=404)
+
+        assert exc_info.value.code == 404
+
+ENSURE EXCEPTION IS RAISED (no false passes)
+---------------------------------------------
+Everything inside the with block after the raising call is skipped.
+If no exception is raised, pytest.raises itself raises Failed.
+
+    def test_must_raise():
+        with pytest.raises(RuntimeError):
+            raise RuntimeError("boom")
+        # lines here are not executed if exception was raised
+
+PYTEST.RAISES VS. PYTEST.WARNS
+--------------------------------
+pytest.raises  → asserts a specific exception is raised
+pytest.warns   → asserts a specific warning is issued
+
+    import warnings
+
+    def test_deprecation_warning():
+        with pytest.warns(DeprecationWarning, match="old_func"):
+            warnings.warn("old_func is deprecated", DeprecationWarning)
+
+USING RAISES AS A FUNCTION (legacy style, avoid)
+-------------------------------------------------
+pytest.raises can be called without a context manager, but the
+context manager style above is preferred and more readable:
+
+    # not recommended:
+    pytest.raises(ZeroDivisionError, lambda: 1 / 0)
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+DISCOVERY
+    pytest                          run all tests
+    pytest test_foo.py              run one file
+    pytest test_foo.py::test_bar    run one test
+    pytest -k "keyword"             filter by name
+    pytest -m marker                filter by marker
+    pytest -v                       verbose
+    pytest -x                       stop on first failure
+    pytest --tb=short               shorter tracebacks
+
+FIXTURES
+    @pytest.fixture                 function scope (default)
+    @pytest.fixture(scope="module") module scope
+    yield in fixture                teardown code after yield
+    conftest.py                     shared fixtures, auto-discovered
+
+ASSERTIONS
+    assert x == y                   equality
+    assert x is None                identity
+    assert x in collection          membership
+    assert isinstance(x, Type)      type check
+    assert x == approx(y)           float comparison
+    assert expr, "message"          custom failure message
+
+PARAMETRIZE
+    @pytest.mark.parametrize("a,b", [(1,2),(3,4)])
+    pytest.param(val, marks=...)    per-case marks/ids
+    indirect=True                   route params through fixture
+    stacking decorators             cartesian product
+
+PYTEST.RAISES
+    with pytest.raises(ExcType):           basic
+    with pytest.raises(ExcType, match=r"pattern"):  regex check
+    with pytest.raises(ExcType) as ei:     inspect ei.value
+    with pytest.raises((TypeError, ValueError)):    multiple types
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

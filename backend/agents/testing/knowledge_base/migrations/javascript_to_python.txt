@@ -1,0 +1,524 @@
+================================================================
+JAVASCRIPT TO PYTHON CONVERSION - TEST CASE KNOWLEDGE BASE
+================================================================
+Reference for building Python test cases that validate code
+converted from JavaScript. Covers undefined vs None, type
+coercion removal, NaN behaviour, and truthy/falsy rule differences.
+All examples use Python (pytest).
+================================================================
+
+CONTEXT FOR TEST CASE AGENT
+-----------------------------
+JavaScript converted to Python carries the most subtle semantic
+traps of any language pair — because JS and Python look similar
+but behave radically differently around falsy values, equality,
+type coercion, and special numeric values. These tests expose
+those hidden semantic bugs in converted Python code.
+
+
+----------------------------------------------------------------
+SECTION 1: UNDEFINED → NONE
+----------------------------------------------------------------
+
+WHAT JAVASCRIPT DOES
+---------------------
+JavaScript has TWO absence values: undefined (variable declared
+but not assigned; missing property; function returns no value)
+and null (explicitly assigned absence). They are distinct:
+
+    // JS:
+    let x;
+    x === undefined;     // true — declared, never assigned
+    let y = null;
+    y === null;          // true — explicitly null
+    undefined == null;   // true  (loose equality)
+    undefined === null;  // false (strict equality)
+
+    typeof undefined;    // "undefined"
+    typeof null;         // "object" (JS historical bug)
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python has only None. There is no undefined. Accessing a variable
+before assignment raises NameError. Missing dict keys raise
+KeyError. Functions with no return statement return None.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. Code that distinguished undefined from null must collapse to None
+2. JS "optional chaining" (obj?.prop) must become explicit None checks
+3. JS typeof checks → Python isinstance() or hasattr() checks
+4. Destructuring defaults for undefined: {a = 5} = obj → get with default
+5. undefined-returning functions → None-returning in Python
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: missing variable raises NameError (not undefined)
+    def test_uninitialized_raises_name_error():
+        with pytest.raises(NameError):
+            _ = completely_undeclared_variable
+
+    # Test 2: function returns None (not undefined) implicitly
+    def no_return_function():
+        x = 1  # no return statement
+
+    def test_no_return_is_none():
+        result = no_return_function()
+        assert result is None
+
+    # Test 3: dict missing key → None via get() (not undefined)
+    def test_missing_dict_key_returns_none():
+        obj = {"a": 1}
+        assert obj.get("b") is None         # JS: obj.b === undefined
+        assert obj.get("b", 5) == 5         # JS: obj.b ?? 5
+
+    # Test 4: None is falsy — same as both undefined and null in JS
+    def test_none_is_falsy():
+        assert not None
+        assert (None or "default") == "default"
+
+    # Test 5: optional chaining → explicit None guard
+    def get_street(user):
+        # JS: user?.address?.street
+        if user is None:
+            return None
+        address = user.get("address")
+        if address is None:
+            return None
+        return address.get("street")
+
+    @pytest.mark.parametrize("user, expected", [
+        (None, None),
+        ({}, None),
+        ({"address": None}, None),
+        ({"address": {}}, None),
+        ({"address": {"street": "Main St"}}, "Main St"),
+    ])
+    def test_optional_chaining_equivalent(user, expected):
+        assert get_street(user) == expected
+
+    # Test 6: typeof check → isinstance / hasattr
+    def is_string(val):
+        return isinstance(val, str)    # JS: typeof val === "string"
+
+    def is_function(val):
+        return callable(val)           # JS: typeof val === "function"
+
+    @pytest.mark.parametrize("val, expected", [
+        ("hello", True),
+        (42,      False),
+        (None,    False),
+        ("",      True),
+    ])
+    def test_is_string(val, expected):
+        assert is_string(val) == expected
+
+    # Test 7: destructuring defaults → dict.get with default
+    def process_config(config):
+        # JS: const { timeout = 30, retries = 3 } = config;
+        timeout = config.get("timeout", 30)
+        retries = config.get("retries", 3)
+        return timeout, retries
+
+    def test_destructuring_defaults():
+        assert process_config({}) == (30, 3)
+        assert process_config({"timeout": 10}) == (10, 3)
+        assert process_config({"timeout": 5, "retries": 1}) == (5, 1)
+
+
+----------------------------------------------------------------
+SECTION 2: TYPE COERCION REMOVED
+----------------------------------------------------------------
+
+WHAT JAVASCRIPT DOES
+---------------------
+JavaScript performs implicit type coercion in comparisons and
+arithmetic. == coerces types before comparing. + coerces to string
+when one operand is a string.
+
+    // JS:
+    "5" + 3;     // "53"   (string concat — 3 coerced to string)
+    "5" - 3;     // 2      (subtraction — "5" coerced to int)
+    "5" == 5;    // true   (loose equality with coercion)
+    "5" === 5;   // false  (strict equality — no coercion)
+    [] + [];     // ""
+    {} + [];     // 0
+    [] == false; // true
+    null + 1;    // 1      (null coerced to 0)
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python does NOT coerce types automatically. "5" + 3 raises TypeError.
+Python == never coerces int to str for comparison.
+Python + between str and int raises TypeError.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. String + number concatenation must become explicit str(n) + string
+2. Loose equality comparisons (== in JS) may have wrong Python behaviour
+3. Implicit numeric conversion of strings must become explicit int()/float()
+4. null arithmetic (null + 1 = 1 in JS) → TypeError in Python
+5. Array/object coercion patterns have no Python equivalent
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: string + int raises TypeError in Python (not coercion)
+    def test_string_int_concat_raises():
+        with pytest.raises(TypeError):
+            result = "value: " + 42   # JS: "value: 42" — Python: TypeError
+
+    def test_explicit_conversion_required():
+        result = "value: " + str(42)
+        assert result == "value: 42"
+
+    # Test 2: Python == does not coerce str and int
+    def test_string_int_not_equal():
+        assert "5" != 5         # JS "5" == 5 is True — Python is False
+        assert not ("5" == 5)
+
+    def test_string_numeric_comparison():
+        assert "5" == "5"       # same type: equal
+        assert 5 == 5           # same type: equal
+        assert "5" != 5         # different types: not equal in Python
+
+    # Test 3: arithmetic on strings raises TypeError
+    def test_string_subtraction_raises():
+        with pytest.raises(TypeError):
+            _ = "5" - 3        # JS: 2 — Python: TypeError
+
+    def test_string_multiplication_works_differently():
+        # Python * with str and int is repetition, not numeric:
+        assert "5" * 3 == "555"   # JS: 15 — Python: "555"
+
+    # Test 4: None arithmetic raises (null + 1 = 1 in JS)
+    def test_none_arithmetic_raises():
+        with pytest.raises(TypeError):
+            _ = None + 1      # JS: 0 + 1 = 1 — Python: TypeError
+        with pytest.raises(TypeError):
+            _ = None + "str"  # JS: "nullstr" — Python: TypeError
+
+    # Test 5: explicit parsing required for numeric strings
+    def parse_and_add(a, b):
+        return int(a) + int(b)   # explicit conversion required
+
+    def test_explicit_int_parsing():
+        assert parse_and_add("5", "3") == 8
+        assert parse_and_add(5, 3) == 8
+
+    def test_parse_invalid_string_raises():
+        with pytest.raises(ValueError):
+            parse_and_add("abc", "3")
+
+    # Test 6: comparison operators — no coercion
+    @pytest.mark.parametrize("a, b, python_eq, js_eq", [
+        (0,    False, True,  True),   # bool is int in Python: 0==False
+        (1,    True,  True,  True),   # bool is int in Python: 1==True
+        (0,    "",    False, True),   # JS coerces — Python does not
+        (0,    None,  False, False),  # both False
+        (0,    "0",   False, True),   # JS coerces — Python does not
+        ("",   False, False, True),   # JS coerces — Python does not
+    ])
+    def test_equality_without_coercion(a, b, python_eq, js_eq):
+        assert (a == b) == python_eq
+
+    # Test 7: array truthiness — no JS-style coercion
+    def test_list_not_coerced_to_zero():
+        lst = []
+        with pytest.raises(TypeError):
+            _ = lst + 1      # JS: [] + 1 → "1" — Python: TypeError
+
+
+----------------------------------------------------------------
+SECTION 3: NaN BEHAVIOR DIFFERS
+----------------------------------------------------------------
+
+WHAT JAVASCRIPT DOES
+---------------------
+In JS, NaN is a global value of type number. Many coercions
+produce NaN silently: parseInt("abc") → NaN. NaN propagates
+through arithmetic. Crucially: NaN !== NaN (JS uses ===).
+
+    // JS:
+    NaN === NaN;    // false
+    NaN == NaN;     // false
+    isNaN(NaN);     // true
+    isNaN("abc");   // true  (isNaN coerces — JS gotcha)
+    Number.isNaN("abc"); // false (strict check)
+    typeof NaN;     // "number"
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python's float("nan") is NaN. math.nan is NaN. NaN != NaN is
+also true in Python. But Python raises ValueError for int("abc"),
+not NaN. NaN only arises from float operations, not string parsing.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. JS parseInt("abc") → NaN; Python int("abc") → ValueError
+2. JS isNaN(x) checks — Python must use math.isnan(float(x))
+3. JS NaN in conditional: if (NaN) → false; Python if math.nan → True
+4. JS NaN comparisons: NaN != NaN is true in both — same
+5. NaN in arrays: JS sort ignores NaN; Python sort raises TypeError
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+    import math
+
+    # Test 1: Python raises ValueError where JS returns NaN
+    def test_invalid_int_raises_not_nan():
+        with pytest.raises(ValueError):
+            int("abc")       # JS parseInt("abc") → NaN
+
+    def test_invalid_float_raises_not_nan():
+        with pytest.raises(ValueError):
+            float("not-a-number")   # JS parseFloat("not-a-number") → NaN
+
+    # Test 2: math.nan — NaN != NaN in Python too
+    def test_nan_not_equal_to_itself():
+        assert math.nan != math.nan
+        assert not (math.nan == math.nan)
+
+    def test_nan_identity():
+        nan = math.nan
+        assert math.isnan(nan)
+
+    # Test 3: NaN is TRUTHY in Python — NOT falsy like in JS!
+    def test_nan_is_truthy_in_python():
+        assert bool(math.nan)      # Python: NaN is truthy!
+        assert math.nan            # evaluates to True in boolean context
+        # JS: Boolean(NaN) === false — OPPOSITE of Python!
+
+    def test_nan_falsy_guard_must_use_isnan():
+        val = float("nan")
+        # Wrong guard (JS style): if not val → won't catch NaN in Python
+        # Correct guard:
+        is_invalid = math.isnan(val)
+        assert is_invalid is True
+
+    # Test 4: NaN propagation through arithmetic — same as JS
+    def test_nan_propagates():
+        nan = math.nan
+        assert math.isnan(nan + 1)
+        assert math.isnan(nan * 0)
+        assert math.isnan(nan - nan)
+        assert math.isnan(nan / 2)
+
+    # Test 5: NaN check — use math.isnan, not == nan
+    def is_valid_number(x):
+        try:
+            return not math.isnan(float(x))
+        except (ValueError, TypeError):
+            return False
+
+    @pytest.mark.parametrize("val, valid", [
+        (1,            True),
+        (0,            True),
+        (-1.5,         True),
+        (math.nan,     False),
+        (float("nan"), False),
+        ("abc",        False),
+        (None,         False),
+        ("1.5",        True),
+    ])
+    def test_is_valid_number(val, valid):
+        assert is_valid_number(val) == valid
+
+    # Test 6: NaN in sorting raises TypeError in Python
+    def test_nan_in_list_sort_raises():
+        lst = [3, float("nan"), 1]
+        with pytest.raises(TypeError):
+            sorted(lst)    # JS: NaN sorted to end silently — Python: TypeError
+
+    # Test 7: NaN in comparisons — all comparisons with NaN are False
+    def test_nan_comparison_always_false():
+        nan = math.nan
+        assert not (nan < 1)
+        assert not (nan > 1)
+        assert not (nan == 1)
+        assert not (nan <= 1)
+        assert not (nan >= 1)
+        assert nan != 1    # this one IS True
+
+
+----------------------------------------------------------------
+SECTION 4: TRUTHY / FALSY RULES DIFFER
+----------------------------------------------------------------
+
+WHAT JAVASCRIPT DOES
+---------------------
+JS falsy values: false, 0, -0, 0n, "", null, undefined, NaN
+JS truthy: everything else, INCLUDING [] and {}!
+
+    // JS:
+    if ([])  → true   (empty array is TRUTHY in JS!)
+    if ({})  → true   (empty object is TRUTHY in JS!)
+    if ("")  → false
+    if ("0") → true   (non-empty string is truthy)
+    if (0)   → false
+    if (NaN) → false
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python falsy: False, None, 0, 0.0, 0j, "", b"", [], {}, set(), ()
+Python truthy: everything else.
+Key differences: [] is FALSY in Python but TRUTHY in JS!
+               {} is FALSY in Python but TRUTHY in JS!
+               NaN is TRUTHY in Python but FALSY in JS!
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. if (arr) → True in JS for empty array; Python if arr → False
+2. if (obj) → True in JS for empty object; Python if d → False
+3. if (NaN) → False in JS; Python if math.nan → True
+4. "0" is truthy in both — safe
+5. 0 is falsy in both — safe
+6. Converted JS guard if (arr) doesn't protect against empty array
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+    import math
+
+    # Falsy in Python                 | JS falsy?
+    # -----------------------------------------------
+    # False                           | yes
+    # None                            | yes (null, undefined)
+    # 0, 0.0, 0j                      | yes (0, -0, 0n)
+    # ""                              | yes
+    # [], {}, set(), ()               | NO — [] {} TRUTHY in JS!
+    # math.nan                        | NO — NaN FALSY in JS!
+
+    # Test 1: empty list is FALSY in Python — TRUTHY in JS
+    def test_empty_list_is_falsy_in_python():
+        assert not []               # Python: falsy
+        assert bool([]) is False
+        # JS: Boolean([]) === true — OPPOSITE
+
+    def test_nonempty_list_is_truthy():
+        assert [0]                  # list with one element is truthy
+        assert bool([0]) is True
+
+    # Test 2: empty dict is FALSY in Python — TRUTHY in JS
+    def test_empty_dict_is_falsy_in_python():
+        assert not {}
+        assert bool({}) is False
+        # JS: Boolean({}) === true — OPPOSITE
+
+    def test_nonempty_dict_is_truthy():
+        assert {"a": 1}
+        assert bool({"a": 1}) is True
+
+    # Test 3: NaN is TRUTHY in Python — FALSY in JS
+    def test_nan_is_truthy_python_vs_js():
+        assert bool(math.nan) is True    # Python: truthy
+        # JS: Boolean(NaN) === false — OPPOSITE
+        # Converted guard must use math.isnan(), not truthiness
+
+    # Test 4: "0" is truthy in BOTH — no difference here
+    def test_string_zero_is_truthy():
+        assert bool("0") is True    # same in both JS and Python
+
+    # Test 5: 0 is falsy in BOTH — no difference here
+    def test_zero_is_falsy():
+        assert bool(0) is False
+        assert bool(0.0) is False
+
+    # Test 6: None is falsy in BOTH — no difference
+    def test_none_is_falsy():
+        assert bool(None) is False
+
+    # Test 7: converted JS guard "if (arr)" doesn't guard empty list in Python
+    def process_if_data_exists(data):
+        # JS-converted code might write: if data → skips empty list
+        if data:    # BUG: skips empty list in Python, not in JS
+            return [x * 2 for x in data]
+        return "no data"
+
+    def test_empty_list_skipped_by_truthiness_guard():
+        assert process_if_data_exists([]) == "no data"  # skipped in Python
+        # In JS, this function would have processed the empty array
+
+    def test_nonempty_list_processed():
+        assert process_if_data_exists([1, 2, 3]) == [2, 4, 6]
+
+    # Test 8: correct guard for "has items" vs "is not None"
+    def safe_process(data):
+        if data is None:             # explicit None check
+            return "missing"
+        if len(data) == 0:           # explicit empty check
+            return "empty"
+        return [x * 2 for x in data]
+
+    @pytest.mark.parametrize("data, expected", [
+        (None,    "missing"),
+        ([],      "empty"),
+        ([1, 2],  [2, 4]),
+    ])
+    def test_safe_guard_distinguishes_none_and_empty(data, expected):
+        assert safe_process(data) == expected
+
+    # Test 9: full falsy comparison table
+    @pytest.mark.parametrize("value, python_falsy", [
+        (False,      True),
+        (None,       True),
+        (0,          True),
+        (0.0,        True),
+        ("",         True),
+        ([],         True),    # FALSY in Python — TRUTHY in JS
+        ({},         True),    # FALSY in Python — TRUTHY in JS
+        (set(),      True),    # FALSY in Python
+        (math.nan,   False),   # TRUTHY in Python — FALSY in JS
+        ("0",        False),
+        ([0],        False),
+        ({"a": 1},   False),
+    ])
+    def test_truthy_falsy_table(value, python_falsy):
+        assert bool(value) == (not python_falsy)
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+UNDEFINED → NONE
+    undefined + null → collapse to None in Python
+    JS obj?.prop → Python: obj.get("prop") if obj else None
+    JS obj.prop (missing) → undefined; Python: raises KeyError
+    JS typeof x === "undefined" → Python: x is None (if was undefined)
+    function no return → both return undefined/None (same)
+    JS {a = 5} = obj → Python: obj.get("a", 5)
+
+TYPE COERCION
+    JS "5" + 3 = "53" → Python: TypeError (must use str(3))
+    JS "5" - 3 = 2    → Python: TypeError (must use int("5"))
+    JS "5" == 5 = true → Python: "5" == 5 is False
+    JS null + 1 = 1    → Python: TypeError
+    JS [] + 1 = "1"    → Python: TypeError
+    Python "5" * 3 = "555" (repetition, not JS numeric 15)
+
+NaN BEHAVIOR
+    NaN != NaN:         True in BOTH — same
+    Python int("abc"):  raises ValueError (JS: NaN)
+    NaN is TRUTHY:      Python — OPPOSITE of JS (JS: falsy)
+    Propagation:        NaN + anything = NaN — same in both
+    Sort with NaN:      Python raises TypeError; JS ignores NaN
+    Guard for NaN:      math.isnan(x) — NOT truthiness
+
+TRUTHY / FALSY
+    []:       FALSY Python, TRUTHY JS — CRITICAL DIFFERENCE
+    {}:       FALSY Python, TRUTHY JS — CRITICAL DIFFERENCE
+    NaN:      TRUTHY Python, FALSY JS — CRITICAL DIFFERENCE
+    "":       falsy in both — same
+    0:        falsy in both — same
+    None:     falsy in Python; null/undefined falsy in JS — same
+    "0":      truthy in both — same
+    guard pattern: use "is None" and "len(x) == 0" not bare truthiness
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

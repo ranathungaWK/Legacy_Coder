@@ -1,0 +1,528 @@
+================================================================
+JAVA TO PYTHON CONVERSION - TEST CASE KNOWLEDGE BASE
+================================================================
+Reference for building Python test cases that validate code
+converted from Java. Covers dynamic typing pitfalls, None vs null,
+integer division differences, and unchecked exceptions. All
+examples use Python (pytest).
+================================================================
+
+CONTEXT FOR TEST CASE AGENT
+-----------------------------
+Java code converted to Python may silently break because Java's
+type system, null handling, and checked exception model enforce
+contracts at compile time that Python enforces nowhere. These
+tests exist to catch those missing runtime checks in converted code.
+
+
+----------------------------------------------------------------
+SECTION 1: STRICT TYPING → DYNAMIC TYPING
+----------------------------------------------------------------
+
+WHAT JAVA DOES
+--------------
+Java is statically typed. Every variable, parameter, and return
+value has a declared type enforced at compile time. Type mismatches
+are compile errors, never runtime surprises.
+
+    // Java:
+    int add(int a, int b) { return a + b; }
+    add("hello", 2);  // compile error — caught immediately
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python is dynamically typed. Variables hold references to any
+object. Type errors happen at runtime, not compile time.
+A function that expects int will silently accept str until
+an operation on it fails — sometimes deep in a call chain.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. Functions that expected int may receive str, float, or None
+2. Return type may vary across code paths — sometimes int, sometimes None
+3. Collection type homogeneity not enforced — list may hold mixed types
+4. Method dispatch is dynamic — wrong object type found at runtime
+5. Interface/abstract class contracts not enforced without extra code
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: functions reject wrong types explicitly
+    def add(a, b):
+        if not isinstance(a, (int, float)):
+            raise TypeError(f"a must be numeric, got {type(a).__name__}")
+        if not isinstance(b, (int, float)):
+            raise TypeError(f"b must be numeric, got {type(b).__name__}")
+        return a + b
+
+    @pytest.mark.parametrize("a, b", [
+        ("hello", 2),
+        (2, "world"),
+        (None, 1),
+        ([1, 2], 3),
+        (True, False),     # bool IS int in Python — may be valid
+    ])
+    def test_add_rejects_non_numeric(a, b):
+        with pytest.raises(TypeError):
+            add(a, b)
+
+    @pytest.mark.parametrize("a, b, expected", [
+        (1,   2,   3),
+        (1.5, 2.5, 4.0),
+        (0,   0,   0),
+    ])
+    def test_add_accepts_numeric(a, b, expected):
+        assert add(a, b) == expected
+
+    # Test 2: bool is a subclass of int in Python — Java has no boolean/int mix
+    def test_bool_is_int_in_python():
+        assert isinstance(True, int)
+        assert True == 1
+        assert False == 0
+        assert True + True == 2   # valid Python — may surprise Java devs
+
+    # Test 3: consistent return type — Java return type enforced by compiler
+    def find_index(lst, value):
+        for i, x in enumerate(lst):
+            if x == value:
+                return i
+        return -1   # Java convention: return -1 for not found
+
+    def test_returns_int_always():
+        result = find_index([1, 2, 3], 2)
+        assert isinstance(result, int)
+        assert result == 1
+
+    def test_returns_negative_one_when_not_found():
+        result = find_index([1, 2, 3], 99)
+        assert isinstance(result, int)
+        assert result == -1
+
+    # Test 4: Java generics → Python list accepts any type
+    def test_list_type_homogeneity():
+        # Java: List<Integer> enforces int only — Python doesn't
+        int_list = [1, 2, 3]
+        int_list.append("oops")   # Python allows this silently
+        assert isinstance(int_list[-1], str)   # mixed type — document behavior
+
+    # Test 5: type annotations don't enforce at runtime (without enforcement lib)
+    def greet(name: str) -> str:
+        return f"Hello, {name}"
+
+    def test_annotation_not_enforced_at_runtime():
+        # Python type hints are documentation only — not enforced
+        result = greet(42)   # passes int — annotation ignored
+        assert result == "Hello, 42"
+
+    # Test 6: isinstance checks for duck typing safety
+    def process_items(items):
+        if not hasattr(items, "__iter__"):
+            raise TypeError("items must be iterable")
+        return list(items)
+
+    def test_accepts_list():
+        assert process_items([1, 2, 3]) == [1, 2, 3]
+
+    def test_accepts_tuple():
+        assert process_items((1, 2)) == [1, 2]
+
+    def test_rejects_int():
+        with pytest.raises(TypeError):
+            process_items(42)
+
+
+----------------------------------------------------------------
+SECTION 2: NULL → NONE
+----------------------------------------------------------------
+
+WHAT JAVA DOES
+--------------
+Java's null can be assigned to any reference type. Accessing a
+method or field on null raises NullPointerException (NPE). Java
+has Optional<T> to express nullable types explicitly.
+
+    // Java:
+    String s = null;
+    s.length();   // NullPointerException at runtime
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python's None is an object — it has no attributes other than
+object's. Accessing anything on None raises AttributeError.
+None is falsy. There is no Optional type enforcement — None
+can be passed anywhere silently.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. NPE → AttributeError — error message is different, test both
+2. Java null comparisons: obj == null → Python: obj is None (not ==)
+3. Java Optional.orElse() patterns → Python "or" default patterns
+4. Collections that held null in Java → Python lists hold None
+5. Java null as "not initialized" → Python often uses None the same way
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: None raises AttributeError, not NullPointerException
+    def test_none_attribute_access_raises():
+        obj = None
+        with pytest.raises(AttributeError):
+            _ = obj.something
+
+    # Test 2: None identity check — use "is", not "=="
+    def test_none_identity_check():
+        val = None
+        assert val is None        # correct
+        assert val is not True
+        assert val is not False
+        assert val is not 0
+        assert val is not ""
+
+    # Test 3: method returns None for missing resource (was null in Java)
+    def find_user(user_id, db):
+        return db.get(user_id)   # returns None if missing
+
+    def test_returns_none_for_missing_user():
+        db = {1: "Alice", 2: "Bob"}
+        assert find_user(99, db) is None
+
+    def test_caller_handles_none_user():
+        db = {}
+        user = find_user(1, db)
+        # Simulate Java Optional.ifPresent:
+        if user is not None:
+            result = user.upper()
+        else:
+            result = "anonymous"
+        assert result == "anonymous"
+
+    # Test 4: Optional.orElse() → Python "or" default
+    def get_display_name(user):
+        return user.get("name") if user else None
+
+    def test_optional_or_else_pattern():
+        user = {"name": "Alice"}
+        display = get_display_name(user) or "Anonymous"
+        assert display == "Alice"
+
+    def test_optional_or_else_none():
+        display = get_display_name(None) or "Anonymous"
+        assert display == "Anonymous"
+
+    def test_optional_or_else_empty_string_gotcha():
+        # "" is falsy — "or" replaces it with default
+        val = "" or "default"
+        assert val == "default"    # may not be intended — document
+
+    # Test 5: None in collections
+    def test_list_with_none_elements():
+        lst = [1, None, 3, None]
+        assert lst.count(None) == 2
+        assert None in lst
+        non_none = [x for x in lst if x is not None]
+        assert non_none == [1, 3]
+
+    # Test 6: dict get returns None for missing key (like Java Map.get)
+    def test_dict_get_returns_none():
+        d = {"a": 1}
+        assert d.get("a") == 1
+        assert d.get("z") is None    # Java: map.get("z") → null
+
+    # Test 7: None is not 0, False, or "" — Java null comparisons differ
+    @pytest.mark.parametrize("value", [0, False, "", [], {}])
+    def test_none_is_not_other_falsy(value):
+        assert None is not value
+        assert None != value or value == 0   # 0 == False in Python
+
+    # Test 8: chained None access pattern
+    def get_city(user):
+        address = user.get("address") if user else None
+        return address.get("city") if address else None
+
+    def test_chained_none_safe_access():
+        assert get_city(None) is None
+        assert get_city({}) is None
+        assert get_city({"address": {}}) is None
+        assert get_city({"address": {"city": "Paris"}}) == "Paris"
+
+
+----------------------------------------------------------------
+SECTION 3: INTEGER DIVISION DIFFERENCES
+----------------------------------------------------------------
+
+WHAT JAVA DOES
+--------------
+Java integer division truncates toward zero — same as C.
+Java / on two ints returns int.
+Java % result has the same sign as the dividend.
+
+    // Java:
+    int a = -7 / 2;   // = -3 (truncates toward zero)
+    int b = -7 % 2;   // = -1 (sign = dividend)
+    double c = 7 / 2; // = 3.0 (int/int gives int, promoted to double = 3.0)
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python // floors toward negative infinity.
+Python / always returns float.
+Python % result has the same sign as the divisor.
+See also c_to_python.txt Section 4 for full detail.
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+    import math
+
+    # Test 1: negative division — Java truncates, Python floors
+    @pytest.mark.parametrize("a, b, java_result, python_floor", [
+        ( 7,  2,  3,  3),
+        (-7,  2, -3, -4),   # CRITICAL DIFFERENCE
+        ( 7, -2, -3, -4),   # CRITICAL DIFFERENCE
+        (-7, -2,  3,  3),
+    ])
+    def test_int_division_negative(a, b, java_result, python_floor):
+        assert a // b == python_floor
+        # Java-equivalent truncation:
+        assert math.trunc(a / b) == java_result
+
+    # Test 2: Java-style truncating division helper
+    def java_div(a, b):
+        return math.trunc(a / b)
+
+    @pytest.mark.parametrize("a, b, expected", [
+        ( 7,  2,  3),
+        (-7,  2, -3),
+        ( 7, -2, -3),
+        (-7, -2,  3),
+        ( 1,  3,  0),
+        (-1,  3,  0),
+    ])
+    def test_java_div_helper(a, b, expected):
+        assert java_div(a, b) == expected
+
+    # Test 3: modulo sign — Java sign=dividend, Python sign=divisor
+    @pytest.mark.parametrize("a, b, java_mod, python_mod", [
+        ( 7,  3,  1,  1),
+        (-7,  3, -1,  2),   # CRITICAL DIFFERENCE
+        ( 7, -3,  1, -2),   # CRITICAL DIFFERENCE
+        (-7, -3, -1, -1),
+    ])
+    def test_modulo_sign(a, b, java_mod, python_mod):
+        assert a % b == python_mod
+        # Java-equivalent:
+        java_result = int(a - b * math.trunc(a / b))
+        assert java_result == java_mod
+
+    # Test 4: Java int/int promotes to double — Python / returns float
+    def test_python_division_always_float():
+        result = 7 / 2
+        assert result == 3.5
+        assert isinstance(result, float)
+
+    def test_java_int_division_truncates_to_int():
+        # Java: 7 / 2 = 3 (int)
+        # Python equivalent: 7 // 2 = 3 (int)
+        result = 7 // 2
+        assert result == 3
+        assert isinstance(result, int)
+
+    # Test 5: division in array index context
+    def test_midpoint_for_binary_search():
+        lo, hi = 0, 9
+        mid = (lo + hi) // 2
+        assert mid == 4
+        assert isinstance(mid, int)   # must be int for index use
+
+    # Test 6: division by zero same behavior
+    def test_division_by_zero_raises():
+        with pytest.raises(ZeroDivisionError):
+            _ = 1 // 0
+        with pytest.raises(ZeroDivisionError):
+            _ = 1 % 0
+
+
+----------------------------------------------------------------
+SECTION 4: EXCEPTIONS UNCHECKED IN PYTHON
+----------------------------------------------------------------
+
+WHAT JAVA DOES
+--------------
+Java has checked exceptions (must be declared in throws or caught)
+and unchecked exceptions (RuntimeException subclasses). Checked
+exceptions are enforced by the compiler.
+
+    // Java:
+    void readFile(String path) throws IOException { ... }
+    // Caller MUST handle IOException or declare it in its throws clause
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python has no checked exceptions. ALL exceptions are unchecked.
+Any function can raise any exception at any time without declaring
+it. There is no compiler enforcement. Exception handling is purely
+a runtime concern.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. Converted callers may not handle exceptions that Java forced them to
+2. IOException equivalents (OSError) may propagate silently
+3. Exception type names differ: IOException → OSError/FileNotFoundError
+4. Checked exception hierarchies were flattened or dropped
+5. throws declarations became no-ops or were lost entirely
+
+EXCEPTION TYPE MAPPING (JAVA → PYTHON)
+----------------------------------------
+    NullPointerException       → AttributeError / TypeError
+    ArrayIndexOutOfBoundsException → IndexError
+    ClassCastException         → TypeError
+    NumberFormatException      → ValueError
+    IllegalArgumentException   → ValueError
+    IllegalStateException      → RuntimeError
+    UnsupportedOperationException → NotImplementedError
+    ArithmeticException        → ZeroDivisionError / ArithmeticError
+    IOException                → OSError
+    FileNotFoundException      → FileNotFoundError
+    StackOverflowError         → RecursionError
+    OutOfMemoryError           → MemoryError
+    ConcurrentModificationException → RuntimeError (no direct equivalent)
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+
+    # Test 1: OSError raised on file not found (was IOException in Java)
+    def read_config(path):
+        with open(path) as f:
+            return f.read()
+
+    def test_file_not_found_raises():
+        with pytest.raises(FileNotFoundError):
+            read_config("/nonexistent/path/config.txt")
+
+    def test_file_not_found_is_oserror():
+        # FileNotFoundError is a subclass of OSError
+        with pytest.raises(OSError):
+            read_config("/nonexistent/path.txt")
+
+    # Test 2: ValueError for invalid numeric input (was NumberFormatException)
+    def parse_int(s):
+        try:
+            return int(s)
+        except ValueError:
+            raise ValueError(f"Invalid integer: {s!r}")
+
+    def test_parse_int_invalid_raises_value_error():
+        with pytest.raises(ValueError, match="Invalid integer"):
+            parse_int("abc")
+
+    def test_parse_int_none_raises():
+        with pytest.raises((TypeError, ValueError)):
+            parse_int(None)
+
+    # Test 3: TypeError for wrong type (was ClassCastException in Java)
+    def sum_ints(lst):
+        if not all(isinstance(x, int) for x in lst):
+            raise TypeError("All elements must be int")
+        return sum(lst)
+
+    def test_sum_ints_rejects_strings():
+        with pytest.raises(TypeError, match="must be int"):
+            sum_ints([1, "two", 3])
+
+    # Test 4: IndexError for out-of-bounds (was ArrayIndexOutOfBoundsException)
+    def get_element(lst, i):
+        if i < 0 or i >= len(lst):
+            raise IndexError(f"Index {i} out of range for list of length {len(lst)}")
+        return lst[i]
+
+    def test_get_element_out_of_bounds():
+        with pytest.raises(IndexError):
+            get_element([1, 2, 3], 5)
+
+    def test_get_element_negative_index():
+        with pytest.raises(IndexError):
+            get_element([1, 2, 3], -1)
+
+    # Test 5: RecursionError for deep recursion (was StackOverflowError)
+    def recursive_sum(n):
+        if n == 0:
+            return 0
+        return n + recursive_sum(n - 1)
+
+    def test_deep_recursion_raises():
+        import sys
+        with pytest.raises(RecursionError):
+            recursive_sum(sys.getrecursionlimit() + 100)
+
+    def test_normal_recursion_works():
+        assert recursive_sum(10) == 55
+
+    # Test 6: NotImplementedError for abstract methods (was UnsupportedOperationException)
+    class AbstractProcessor:
+        def process(self, data):
+            raise NotImplementedError("Subclass must implement process()")
+
+    def test_abstract_method_raises():
+        p = AbstractProcessor()
+        with pytest.raises(NotImplementedError):
+            p.process("data")
+
+    # Test 7: exception propagates if not caught — unlike Java's checked
+    def caller_without_handler():
+        return read_config("/no/such/file.txt")   # no try/except here
+
+    def test_unchecked_propagates_to_caller():
+        with pytest.raises(FileNotFoundError):
+            caller_without_handler()   # Python allows this — Java would not
+
+    # Test 8: multiple exception types in one except
+    @pytest.mark.parametrize("bad_value", ["abc", None, 3.5])
+    def test_strict_int_parse_rejects_non_int_strings(bad_value):
+        with pytest.raises((ValueError, TypeError)):
+            int(bad_value)
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+STATIC → DYNAMIC TYPING
+    no compile-time type enforcement — all type errors are runtime
+    isinstance(x, int) to guard numeric inputs
+    bool is subclass of int: True==1, False==0
+    type annotations are documentation only — not enforced
+    Java List<T> → Python list — heterogeneous types allowed
+    test all type boundary inputs: int, float, str, None, list
+
+NULL → NONE
+    null → None; always use "is None" not "== None"
+    NPE → AttributeError in Python
+    Optional.orElse(x) → value or x (beware: replaces all falsy)
+    null in collection → None in list — test explicitly
+    Java Map.get(key) returns null → Python dict.get(key) returns None
+    chained access: check each level for None before accessing next
+
+INTEGER DIVISION
+    Java: -7 / 2 = -3 (truncates toward zero)
+    Python: -7 // 2 = -4 (floors toward -inf) — DIFFERENT for negatives
+    Java: -7 % 2 = -1 (sign = dividend)
+    Python: -7 % 2 = 2 (sign = divisor) — DIFFERENT for negatives
+    Python / always returns float; Java int/int returns int
+    use math.trunc(a/b) to replicate Java truncating division
+
+EXCEPTIONS
+    Java checked → Python unchecked — callers never forced to handle
+    NullPointerException   → AttributeError, TypeError
+    NumberFormatException  → ValueError
+    ClassCastException     → TypeError
+    ArrayIndexOutOfBoundsException → IndexError
+    IOException            → OSError
+    FileNotFoundException  → FileNotFoundError (subclass of OSError)
+    StackOverflowError     → RecursionError
+    throws declaration → no equivalent; document with docstring
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

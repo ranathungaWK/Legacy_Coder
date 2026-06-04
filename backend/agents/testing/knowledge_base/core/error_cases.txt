@@ -1,0 +1,784 @@
+================================================================
+ERROR CASES - KNOWLEDGE BASE
+================================================================
+A comprehensive reference for exception handling patterns in Python.
+Covers raising, catching, chaining, custom exceptions, logging,
+retries, and testing error paths.
+Intended for use as a RAG source.
+================================================================
+
+
+----------------------------------------------------------------
+SECTION 1: EXCEPTION FUNDAMENTALS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Exceptions are the standard Python mechanism for signaling and
+handling error conditions. Unlike return codes, exceptions cannot
+be silently ignored and propagate up the call stack until caught.
+
+EXCEPTION HIERARCHY (BUILT-IN)
+-------------------------------
+BaseException
+├── SystemExit
+├── KeyboardInterrupt
+├── GeneratorExit
+└── Exception
+    ├── ArithmeticError
+    │   ├── ZeroDivisionError
+    │   ├── OverflowError
+    │   └── FloatingPointError
+    ├── LookupError
+    │   ├── IndexError
+    │   └── KeyError
+    ├── ValueError
+    ├── TypeError
+    ├── AttributeError
+    ├── NameError
+    ├── OSError (IOError, FileNotFoundError, PermissionError, ...)
+    ├── RuntimeError
+    │   └── RecursionError
+    ├── StopIteration
+    ├── NotImplementedError
+    └── ImportError
+        └── ModuleNotFoundError
+
+Key rule: catch Exception or subclasses. Never catch BaseException
+unless you are writing a top-level shutdown handler, because
+BaseException includes SystemExit and KeyboardInterrupt.
+
+BASIC TRY / EXCEPT
+-------------------
+    try:
+        result = risky_operation()
+    except ValueError as e:
+        print(f"Bad value: {e}")
+
+MULTIPLE EXCEPT CLAUSES
+------------------------
+Handle specific exceptions before general ones. More specific
+exception classes must come before their parents.
+
+    try:
+        data = load_data(path)
+    except FileNotFoundError:
+        print("File not found")
+    except PermissionError:
+        print("No permission to read file")
+    except OSError as e:
+        print(f"OS error: {e}")
+
+CATCHING MULTIPLE EXCEPTIONS IN ONE CLAUSE
+-------------------------------------------
+    try:
+        value = int(user_input)
+    except (ValueError, TypeError) as e:
+        print(f"Could not parse input: {e}")
+
+ELSE CLAUSE
+-----------
+The else block runs only if no exception was raised.
+Use it for code that should run on success, to keep it
+separate from the try block's error-handling logic.
+
+    try:
+        result = parse(data)
+    except ParseError as e:
+        log.error(e)
+    else:
+        save(result)   # only runs if parse() succeeded
+
+FINALLY CLAUSE
+--------------
+The finally block always runs, whether or not an exception occurred.
+Use it for cleanup: closing files, releasing locks, etc.
+
+    conn = None
+    try:
+        conn = get_connection()
+        conn.execute(query)
+    except DatabaseError as e:
+        log.error(f"Query failed: {e}")
+    finally:
+        if conn is not None:
+            conn.close()   # always runs
+
+FULL STRUCTURE
+--------------
+    try:
+        ...              # code that may raise
+    except SomeError:
+        ...              # handle specific error
+    except OtherError:
+        ...              # handle another error
+    else:
+        ...              # runs only on success
+    finally:
+        ...              # always runs
+
+
+----------------------------------------------------------------
+SECTION 2: RAISING EXCEPTIONS
+----------------------------------------------------------------
+
+RAISE STATEMENT
+---------------
+    # Raise a new exception:
+    raise ValueError("Input must be positive")
+
+    # Raise with no argument — re-raises the current exception:
+    try:
+        risky()
+    except Exception:
+        log_error()
+        raise   # re-raises original exception unchanged
+
+WHEN TO RAISE
+-------------
+    def set_age(self, value):
+        if not isinstance(value, int):
+            raise TypeError(f"Age must be int, got {type(value).__name__}")
+        if value < 0 or value > 150:
+            raise ValueError(f"Age {value} is out of range [0, 150]")
+        self.age = value
+
+CHOOSING THE RIGHT EXCEPTION TYPE
+-----------------------------------
+    ValueError     → valid type, bad value            int("abc")
+    TypeError      → wrong type entirely               len(42)
+    KeyError       → missing dict key                  d["missing"]
+    IndexError     → index out of range                lst[99]
+    AttributeError → missing attribute                 obj.missing
+    RuntimeError   → error that doesn't fit elsewhere
+    NotImplementedError → abstract method not implemented
+    OSError        → file/network/OS failures
+    PermissionError → access denied (subclass of OSError)
+    FileNotFoundError → file missing (subclass of OSError)
+    TimeoutError   → operation timed out (subclass of OSError)
+    StopIteration  → signal end of iteration
+
+VALIDATION PATTERN
+------------------
+    def create_user(name, age):
+        if name is None:
+            raise ValueError("name cannot be None")
+        if not isinstance(name, str):
+            raise TypeError(f"name must be str, got {type(name).__name__}")
+        if not name.strip():
+            raise ValueError("name cannot be empty or whitespace")
+        if not isinstance(age, int):
+            raise TypeError(f"age must be int, got {type(age).__name__}")
+        if age < 0 or age > 150:
+            raise ValueError(f"age must be in [0, 150], got {age}")
+        return User(name=name.strip(), age=age)
+
+
+----------------------------------------------------------------
+SECTION 3: EXCEPTION CHAINING
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Exception chaining preserves the original cause of an error while
+raising a new, more descriptive exception. This is essential for
+debugging layered code.
+
+IMPLICIT CHAINING (raise inside except)
+----------------------------------------
+When you raise inside an except block, Python automatically chains:
+
+    try:
+        value = int(raw)
+    except ValueError as e:
+        raise RuntimeError("Failed to parse config") from e
+
+    # Output:
+    # ValueError: invalid literal for int() with base 10: 'abc'
+    # The above exception was the direct cause of:
+    # RuntimeError: Failed to parse config
+
+EXPLICIT CHAINING (from)
+------------------------
+    raise NewException("message") from original_exception
+
+SUPPRESS CHAINING (from None)
+------------------------------
+Use from None when the original cause is an implementation detail
+and should not appear in the traceback:
+
+    try:
+        return cache[key]
+    except KeyError:
+        raise MissingResourceError(key) from None
+
+ACCESSING THE CAUSE
+--------------------
+    try:
+        raise RuntimeError("outer") from ValueError("inner")
+    except RuntimeError as e:
+        assert e.__cause__ is not None
+        assert isinstance(e.__cause__, ValueError)
+
+    # __context__: set automatically when re-raising inside except
+    # __cause__:   set explicitly with "from"
+    # __suppress_context__: True when "from None" is used
+
+
+----------------------------------------------------------------
+SECTION 4: CUSTOM EXCEPTIONS
+----------------------------------------------------------------
+
+BASIC CUSTOM EXCEPTION
+-----------------------
+Always inherit from Exception (or a relevant subclass).
+Use a docstring to document when this exception is raised.
+
+    class AppError(Exception):
+        """Base exception for all application errors."""
+
+    class ValidationError(AppError):
+        """Raised when user input fails validation."""
+
+    class NotFoundError(AppError):
+        """Raised when a requested resource does not exist."""
+
+    class AuthError(AppError):
+        """Raised when authentication or authorization fails."""
+
+CUSTOM EXCEPTION WITH ATTRIBUTES
+----------------------------------
+Add structured data to exceptions to make error handling precise:
+
+    class ValidationError(Exception):
+        """Raised when input validation fails."""
+
+        def __init__(self, field, message, value=None):
+            self.field = field
+            self.message = message
+            self.value = value
+            super().__init__(f"{field}: {message}")
+
+    # Usage:
+    raise ValidationError(field="email", message="invalid format", value="notanemail")
+
+    # Catching and inspecting:
+    try:
+        validate_user(data)
+    except ValidationError as e:
+        print(f"Field '{e.field}' failed: {e.message}")
+
+EXCEPTION WITH STATUS CODE (API PATTERN)
+-----------------------------------------
+    class APIError(Exception):
+        def __init__(self, message, status_code=500, payload=None):
+            super().__init__(message)
+            self.status_code = status_code
+            self.payload = payload or {}
+
+        def to_dict(self):
+            return {"error": str(self), "code": self.status_code, **self.payload}
+
+    class NotFoundError(APIError):
+        def __init__(self, resource, resource_id):
+            super().__init__(
+                f"{resource} with id={resource_id} not found",
+                status_code=404,
+                payload={"resource": resource, "id": resource_id}
+            )
+
+EXCEPTION HIERARCHY FOR LARGE APPS
+-------------------------------------
+Define a base exception and layer subclasses by domain:
+
+    class AppError(Exception):
+        """Root exception for all app errors."""
+
+    # Domain: data layer
+    class DataError(AppError): pass
+    class RecordNotFound(DataError): pass
+    class DuplicateRecord(DataError): pass
+
+    # Domain: business logic
+    class BusinessError(AppError): pass
+    class InsufficientFunds(BusinessError): pass
+    class QuotaExceeded(BusinessError): pass
+
+    # Domain: external services
+    class ServiceError(AppError): pass
+    class ServiceUnavailable(ServiceError): pass
+    class ServiceTimeout(ServiceError): pass
+
+    # Callers can catch at any level:
+    except DataError:    # catches RecordNotFound, DuplicateRecord, etc.
+    except AppError:     # catches everything
+    except RecordNotFound:  # catches only this specific case
+
+
+----------------------------------------------------------------
+SECTION 5: COMMON EXCEPTION HANDLING PATTERNS
+----------------------------------------------------------------
+
+PATTERN 1: GUARD AND RAISE EARLY
+---------------------------------
+Validate inputs at the function boundary before doing any work.
+This keeps error paths short and keeps logic uncluttered.
+
+    def process_order(order_id, quantity):
+        if order_id is None:
+            raise ValueError("order_id is required")
+        if not isinstance(quantity, int) or quantity <= 0:
+            raise ValueError(f"quantity must be a positive int, got {quantity!r}")
+        # ... actual logic here
+
+PATTERN 2: CONVERT EXTERNAL EXCEPTIONS
+----------------------------------------
+Wrap lower-level or third-party exceptions into your own domain
+exceptions at the boundary, so callers only need to know your API.
+
+    def fetch_user(user_id):
+        try:
+            return db.query(User).filter_by(id=user_id).one()
+        except NoResultFound:
+            raise UserNotFoundError(user_id) from None
+        except SQLAlchemyError as e:
+            raise DataLayerError("Database query failed") from e
+
+PATTERN 3: CATCH, LOG, AND RE-RAISE
+-------------------------------------
+Log the error for observability, then re-raise so callers can still
+handle it. Do not swallow exceptions silently.
+
+    import logging
+    log = logging.getLogger(__name__)
+
+    def load_config(path):
+        try:
+            return parse_config(path)
+        except FileNotFoundError:
+            log.error("Config file not found: %s", path)
+            raise
+        except yaml.YAMLError as e:
+            log.error("Config file is malformed: %s", e)
+            raise ConfigError(f"Invalid config at {path}") from e
+
+PATTERN 4: DEFAULT ON ERROR (SAFE FALLBACK)
+--------------------------------------------
+Return a safe default instead of propagating when the error is
+non-critical and a fallback is meaningful.
+
+    def get_setting(key, default=None):
+        try:
+            return config[key]
+        except KeyError:
+            return default
+
+    def parse_int(value, default=0):
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
+PATTERN 5: CONTEXT MANAGER FOR RESOURCES
+-----------------------------------------
+Use contextlib.contextmanager or __enter__/__exit__ to ensure
+resources are always released even when exceptions occur.
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def managed_connection(url):
+        conn = connect(url)
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    # Usage:
+    with managed_connection(DB_URL) as conn:
+        conn.execute(query)
+
+PATTERN 6: RETRY WITH BACKOFF
+------------------------------
+For transient errors (network, rate limits), retry with exponential
+backoff and a maximum attempt count.
+
+    import time
+    import logging
+
+    log = logging.getLogger(__name__)
+
+    def with_retry(func, retries=3, delay=1.0, backoff=2.0,
+                   exceptions=(Exception,)):
+        attempt = 0
+        while attempt < retries:
+            try:
+                return func()
+            except exceptions as e:
+                attempt += 1
+                if attempt >= retries:
+                    raise
+                wait = delay * (backoff ** (attempt - 1))
+                log.warning("Attempt %d failed (%s), retrying in %.1fs", attempt, e, wait)
+                time.sleep(wait)
+
+    # Usage:
+    result = with_retry(
+        lambda: requests.get(url, timeout=5),
+        retries=3,
+        exceptions=(requests.Timeout, requests.ConnectionError)
+    )
+
+    # With tenacity library (preferred for production):
+    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(requests.Timeout)
+    )
+    def fetch_data(url):
+        return requests.get(url, timeout=5)
+
+PATTERN 7: EXCEPTION GROUPS (Python 3.11+)
+-------------------------------------------
+ExceptionGroup lets you raise and handle multiple concurrent errors,
+useful in async tasks or parallel processing.
+
+    # Raise multiple:
+    raise ExceptionGroup("batch errors", [
+        ValueError("item 1 failed"),
+        TypeError("item 2 failed"),
+    ])
+
+    # Catch with except*:
+    try:
+        process_batch(items)
+    except* ValueError as eg:
+        for e in eg.exceptions:
+            log.error("Value error: %s", e)
+    except* TypeError as eg:
+        for e in eg.exceptions:
+            log.error("Type error: %s", e)
+
+PATTERN 8: SUPPRESS SPECIFIC EXCEPTIONS
+-----------------------------------------
+contextlib.suppress silently ignores a named exception.
+Use only when the exception genuinely does not matter.
+
+    from contextlib import suppress
+
+    with suppress(FileNotFoundError):
+        os.remove(temp_file)   # OK if file doesn't exist
+
+    # Equivalent to:
+    try:
+        os.remove(temp_file)
+    except FileNotFoundError:
+        pass
+
+PATTERN 9: GLOBAL EXCEPTION HANDLER
+--------------------------------------
+Catch unhandled exceptions at the top level for logging and
+graceful shutdown. Never use this as a substitute for proper
+handling lower down.
+
+    import sys
+
+    def handle_uncaught(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        log.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
+
+    sys.excepthook = handle_uncaught
+
+PATTERN 10: NEVER DO THESE (ANTI-PATTERNS)
+-------------------------------------------
+    # BAD: bare except catches everything including SystemExit
+    try:
+        risky()
+    except:
+        pass
+
+    # BAD: catch Exception and silently ignore — hides bugs
+    try:
+        risky()
+    except Exception:
+        pass
+
+    # BAD: catch Exception too broadly without re-raising
+    try:
+        result = compute()
+    except Exception as e:
+        print("Error!")         # swallowed — caller never knows
+
+    # BAD: use exceptions for normal control flow
+    try:
+        value = d["key"]
+    except KeyError:
+        value = "default"
+    # Preferred: value = d.get("key", "default")
+
+    # BAD: raise string instead of exception
+    raise "something went wrong"   # TypeError in Python 3
+
+    # BAD: lose original traceback
+    try:
+        risky()
+    except ValueError as e:
+        raise RuntimeError("failed") # loses original — use "from e"
+
+
+----------------------------------------------------------------
+SECTION 6: EXCEPTION HANDLING IN ASYNC CODE
+----------------------------------------------------------------
+
+ASYNC TRY / EXCEPT
+-------------------
+Works identically to sync — exceptions from awaited coroutines
+propagate normally.
+
+    async def fetch(url):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=10) as resp:
+                    resp.raise_for_status()
+                    return await resp.json()
+        except aiohttp.ClientResponseError as e:
+            raise ServiceError(f"HTTP {e.status}: {url}") from e
+        except asyncio.TimeoutError:
+            raise ServiceTimeout(f"Request timed out: {url}") from None
+
+GATHERING TASKS WITH ERRORS
+-----------------------------
+    import asyncio
+
+    results = await asyncio.gather(
+        task1(), task2(), task3(),
+        return_exceptions=True   # exceptions become results, not raised
+    )
+
+    for r in results:
+        if isinstance(r, Exception):
+            log.error("Task failed: %s", r)
+        else:
+            process(r)
+
+ASYNC CONTEXT MANAGER FOR CLEANUP
+-----------------------------------
+    class ManagedSession:
+        async def __aenter__(self):
+            self.session = aiohttp.ClientSession()
+            return self.session
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            await self.session.close()
+            return False   # do not suppress exceptions
+
+    async with ManagedSession() as session:
+        data = await session.get(url)
+
+
+----------------------------------------------------------------
+SECTION 7: LOGGING EXCEPTIONS
+----------------------------------------------------------------
+
+LOGGING WITH EXCEPTION INFO
+-----------------------------
+    import logging
+    log = logging.getLogger(__name__)
+
+    try:
+        risky()
+    except ValueError as e:
+        log.error("Validation failed: %s", e)             # message only
+        log.error("Validation failed", exc_info=True)     # + full traceback
+        log.exception("Validation failed")                # shorthand for exc_info=True
+
+    # log.exception() is equivalent to log.error(..., exc_info=True)
+    # Always use log.exception() inside an except block
+
+STRUCTURED LOGGING PATTERN
+---------------------------
+    log.error(
+        "Payment failed",
+        extra={
+            "user_id": user.id,
+            "amount": amount,
+            "currency": currency,
+            "error": str(e),
+        }
+    )
+
+LOGGING LEVELS FOR ERRORS
+--------------------------
+    log.debug(...)    # developer diagnostic info
+    log.info(...)     # normal operation events
+    log.warning(...)  # unexpected but recoverable
+    log.error(...)    # error that affects current operation
+    log.critical(...) # system-level failure, possible crash
+
+
+----------------------------------------------------------------
+SECTION 8: TESTING ERROR CASES
+----------------------------------------------------------------
+
+TESTING THAT EXCEPTIONS ARE RAISED
+------------------------------------
+Use pytest.raises as a context manager:
+
+    import pytest
+
+    def test_divide_by_zero():
+        with pytest.raises(ZeroDivisionError):
+            1 / 0
+
+    def test_invalid_age():
+        with pytest.raises(ValueError, match="out of range"):
+            set_age(200)
+
+INSPECTING EXCEPTION DETAILS
+------------------------------
+    def test_validation_error_fields():
+        with pytest.raises(ValidationError) as exc_info:
+            validate_email("notanemail")
+
+        err = exc_info.value
+        assert err.field == "email"
+        assert "invalid" in err.message.lower()
+
+TESTING EXCEPTION CHAINING
+---------------------------
+    def test_wraps_database_error():
+        with pytest.raises(DataLayerError) as exc_info:
+            fetch_user(-1)
+
+        assert exc_info.value.__cause__ is not None
+        assert isinstance(exc_info.value.__cause__, SQLAlchemyError)
+
+PARAMETRIZE OVER ERROR CASES
+------------------------------
+    @pytest.mark.parametrize("bad_input, exc_type, match", [
+        (None,   TypeError,  "cannot be None"),
+        ("",     ValueError, "cannot be empty"),
+        ("   ",  ValueError, "cannot be empty"),
+        (123,    TypeError,  "must be str"),
+    ])
+    def test_validate_name_errors(bad_input, exc_type, match):
+        with pytest.raises(exc_type, match=match):
+            validate_name(bad_input)
+
+TESTING THAT NO EXCEPTION IS RAISED
+-------------------------------------
+    def test_valid_input_does_not_raise():
+        # If no exception is raised, test passes.
+        result = safe_divide(10, 2)
+        assert result == 5.0
+
+    # Explicit version using pytest.raises with does_not_raise (pytest 7+):
+    from contextlib import nullcontext
+
+    @pytest.mark.parametrize("a, b, ctx", [
+        (10, 2,  nullcontext()),
+        (10, 0,  pytest.raises(ValueError)),
+    ])
+    def test_divide(a, b, ctx):
+        with ctx:
+            result = safe_divide(a, b)
+
+TESTING RETRY BEHAVIOR (WITH MOCK)
+------------------------------------
+    from unittest.mock import patch, MagicMock
+    import pytest
+
+    def test_retries_on_timeout():
+        mock_get = MagicMock(side_effect=[
+            requests.Timeout(),
+            requests.Timeout(),
+            MagicMock(status_code=200),   # succeeds on 3rd attempt
+        ])
+        with patch("requests.get", mock_get):
+            result = fetch_with_retry(url)
+        assert mock_get.call_count == 3
+
+    def test_raises_after_max_retries():
+        mock_get = MagicMock(side_effect=requests.Timeout())
+        with patch("requests.get", mock_get):
+            with pytest.raises(requests.Timeout):
+                fetch_with_retry(url, retries=3)
+        assert mock_get.call_count == 3
+
+TESTING CLEANUP IN FINALLY
+---------------------------
+    def test_connection_closed_on_error():
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = RuntimeError("db error")
+
+        with patch("mymodule.get_connection", return_value=mock_conn):
+            with pytest.raises(RuntimeError):
+                run_query("SELECT 1")
+
+        mock_conn.close.assert_called_once()
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+STRUCTURE
+    try / except / else / finally
+    else:    runs only if no exception
+    finally: always runs (cleanup)
+
+RAISING
+    raise ValueError("msg")              new exception
+    raise                                re-raise current
+    raise NewError("msg") from original  chain with cause
+    raise NewError("msg") from None      suppress cause
+
+CATCHING
+    except TypeError:                    one type
+    except (TypeError, ValueError):      multiple types
+    except Exception as e:               capture instance
+    bare except:                         NEVER use
+
+EXCEPTION CHAINING
+    e.__cause__       set by "from exc"
+    e.__context__     set automatically inside except
+    e.__traceback__   traceback object
+
+CUSTOM EXCEPTIONS
+    class MyError(Exception): pass
+    class MyError(Exception):
+        def __init__(self, field, msg):
+            super().__init__(f"{field}: {msg}")
+            self.field = field
+
+PATTERNS
+    guard and raise early          validate at function boundary
+    convert external exceptions    wrap third-party at layer boundary
+    catch / log / re-raise         log.exception(); raise
+    safe fallback                  except Error: return default
+    context manager                @contextmanager / with suppress()
+    retry                          tenacity or manual loop
+
+ANTI-PATTERNS
+    bare except:                   catches SystemExit, KeyboardInterrupt
+    except Exception: pass         silently swallows errors
+    raise "string"                 TypeError in Python 3
+    raise NewError from None       use only to hide impl details
+
+TESTING
+    pytest.raises(Type)            assert exception is raised
+    pytest.raises(Type, match=r"") assert message pattern
+    exc_info.value                 inspect exception instance
+    exc_info.value.__cause__       inspect chained cause
+    nullcontext()                  parametrize "no exception" case
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

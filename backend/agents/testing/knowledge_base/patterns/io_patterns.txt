@@ -1,0 +1,898 @@
+================================================================
+IO PATTERNS - TEST CASE KNOWLEDGE BASE
+================================================================
+Reference for building Python test cases that validate I/O code.
+Covers file handling, input validation, missing files, and
+incorrect format handling. Designed for RAG-based test case
+generation agents. All examples use Python (pytest).
+================================================================
+
+CONTEXT FOR TEST CASE AGENT
+-----------------------------
+I/O code is where most real-world failures occur — files that
+don't exist, inputs that are malformed, permissions that are
+wrong, and formats that are partially valid. Every I/O function
+must be tested with: the happy path, missing resources, wrong
+format, empty content, and permission failures. Use pytest's
+tmp_path fixture for all file-based tests.
+
+
+----------------------------------------------------------------
+SECTION 1: FILE HANDLING
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+File handling code must correctly open, read, write, and close
+files. Resources must be released even when exceptions occur.
+Paths must be validated. File operations must be wrapped in
+context managers (with statement) to guarantee cleanup.
+
+CORE FILE READING TEST CASES
+------------------------------
+    import pytest
+    from pathlib import Path
+
+    # Fixture: create a temp file with known content
+    @pytest.fixture
+    def sample_file(tmp_path):
+        f = tmp_path / "sample.txt"
+        f.write_text("line1\nline2\nline3\n")
+        return f
+
+    # Test 1: reads content correctly
+    def test_read_file_content(sample_file):
+        result = read_file(sample_file)
+        assert "line1" in result
+        assert "line2" in result
+
+    # Test 2: returns correct number of lines
+    def test_read_file_line_count(sample_file):
+        lines = read_lines(sample_file)
+        assert len(lines) == 3
+
+    # Test 3: strips trailing newline from each line
+    def test_read_lines_no_trailing_newline(sample_file):
+        lines = read_lines(sample_file)
+        for line in lines:
+            assert not line.endswith("\n")
+
+    # Test 4: empty file
+    @pytest.fixture
+    def empty_file(tmp_path):
+        f = tmp_path / "empty.txt"
+        f.write_text("")
+        return f
+
+    def test_read_empty_file(empty_file):
+        result = read_file(empty_file)
+        assert result == "" or result == []
+
+    def test_read_lines_empty_file(empty_file):
+        lines = read_lines(empty_file)
+        assert lines == []
+
+    # Test 5: file with single line no trailing newline
+    def test_read_single_line_no_newline(tmp_path):
+        f = tmp_path / "single.txt"
+        f.write_text("only line")   # no trailing \n
+        lines = read_lines(f)
+        assert len(lines) == 1
+        assert lines[0] == "only line"
+
+    # Test 6: file with only whitespace lines
+    def test_read_whitespace_lines(tmp_path):
+        f = tmp_path / "ws.txt"
+        f.write_text("   \n\t\n   \n")
+        lines = read_lines(f)
+        assert len(lines) == 3
+        assert all(line.strip() == "" for line in lines)
+
+    # Test 7: file with Windows line endings (CRLF)
+    def test_read_crlf_line_endings(tmp_path):
+        f = tmp_path / "crlf.txt"
+        f.write_bytes(b"line1\r\nline2\r\nline3\r\n")
+        lines = read_lines(f)
+        assert len(lines) == 3
+        assert lines[0].rstrip("\r\n") == "line1"
+
+CORE FILE WRITING TEST CASES
+------------------------------
+    # Test 8: written content is readable back
+    def test_write_and_read_back(tmp_path):
+        f = tmp_path / "output.txt"
+        content = "hello world\n"
+        write_file(f, content)
+        assert f.read_text() == content
+
+    # Test 9: overwrites existing content
+    def test_write_overwrites_existing(tmp_path):
+        f = tmp_path / "output.txt"
+        f.write_text("old content")
+        write_file(f, "new content")
+        assert f.read_text() == "new content"
+
+    # Test 10: appends correctly
+    def test_append_to_file(tmp_path):
+        f = tmp_path / "log.txt"
+        append_to_file(f, "line1\n")
+        append_to_file(f, "line2\n")
+        content = f.read_text()
+        assert content == "line1\nline2\n"
+
+    # Test 11: creates file if it doesn't exist
+    def test_write_creates_new_file(tmp_path):
+        f = tmp_path / "new_file.txt"
+        assert not f.exists()
+        write_file(f, "data")
+        assert f.exists()
+        assert f.read_text() == "data"
+
+    # Test 12: writes empty string
+    def test_write_empty_string(tmp_path):
+        f = tmp_path / "empty.txt"
+        write_file(f, "")
+        assert f.exists()
+        assert f.read_text() == ""
+
+CONTEXT MANAGER / RESOURCE CLEANUP
+-------------------------------------
+    # Test 13: file is closed after reading
+    def test_file_closed_after_read(tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("data")
+        file_obj = None
+        with open(f) as file_obj:
+            _ = file_obj.read()
+        assert file_obj.closed
+
+    # Test 14: file is closed even on exception
+    def test_file_closed_on_exception(tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("data")
+        file_obj = None
+        with pytest.raises(ValueError):
+            with open(f) as file_obj:
+                raise ValueError("simulated error")
+        assert file_obj.closed
+
+BINARY FILE HANDLING
+---------------------
+    # Test 15: read binary file
+    def test_read_binary_file(tmp_path):
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"\x00\x01\x02\x03")
+        result = read_binary(f)
+        assert result == b"\x00\x01\x02\x03"
+        assert len(result) == 4
+
+    # Test 16: write and read binary round-trip
+    def test_binary_roundtrip(tmp_path):
+        f = tmp_path / "data.bin"
+        data = bytes(range(256))
+        write_binary(f, data)
+        assert read_binary(f) == data
+
+LARGE FILE HANDLING
+--------------------
+    # Test 17: generator-based reading for large files (memory efficient)
+    def test_read_large_file_generator(tmp_path):
+        f = tmp_path / "large.txt"
+        lines = [f"line {i}\n" for i in range(100000)]
+        f.write_text("".join(lines))
+
+        count = 0
+        for line in read_lines_generator(f):
+            count += 1
+        assert count == 100000
+
+    # Test 18: chunked reading
+    def test_read_in_chunks(tmp_path):
+        f = tmp_path / "data.txt"
+        f.write_text("a" * 10000)
+        chunks = list(read_chunks(f, chunk_size=1000))
+        assert len(chunks) == 10
+        assert all(len(c) == 1000 for c in chunks)
+
+CSV FILE HANDLING
+-----------------
+    import csv
+
+    @pytest.fixture
+    def csv_file(tmp_path):
+        f = tmp_path / "data.csv"
+        f.write_text("name,age,city\nAlice,30,NYC\nBob,25,LA\n")
+        return f
+
+    # Test 19: reads header correctly
+    def test_csv_reads_header(csv_file):
+        rows = read_csv(csv_file)
+        assert rows[0] == {"name": "Alice", "age": "30", "city": "NYC"}
+
+    # Test 20: correct row count
+    def test_csv_row_count(csv_file):
+        rows = read_csv(csv_file)
+        assert len(rows) == 2   # header excluded, 2 data rows
+
+    # Test 21: empty CSV (header only)
+    def test_csv_header_only(tmp_path):
+        f = tmp_path / "header.csv"
+        f.write_text("name,age,city\n")
+        rows = read_csv(f)
+        assert rows == []
+
+    # Test 22: CSV with empty values
+    def test_csv_empty_fields(tmp_path):
+        f = tmp_path / "sparse.csv"
+        f.write_text("name,age,city\nAlice,,NYC\n")
+        rows = read_csv(f)
+        assert rows[0]["age"] == ""
+
+    # Test 23: CSV with quoted fields containing commas
+    def test_csv_quoted_commas(tmp_path):
+        f = tmp_path / "quoted.csv"
+        f.write_text('name,address\n"Smith, John","123 Main St"\n')
+        rows = read_csv(f)
+        assert rows[0]["name"] == "Smith, John"
+
+
+----------------------------------------------------------------
+SECTION 2: INPUT VALIDATION
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Input validation tests ensure that every function that accepts
+external data (user input, API responses, file content, form
+data) rejects invalid data before processing it. All validation
+must happen at the boundary — before any logic or storage.
+
+TYPE VALIDATION
+----------------
+    import pytest
+
+    def validate_age(value):
+        if not isinstance(value, int):
+            raise TypeError(f"age must be int, got {type(value).__name__}")
+        if value < 0 or value > 150:
+            raise ValueError(f"age must be in [0, 150], got {value}")
+        return value
+
+    # Test 1: valid inputs accepted
+    @pytest.mark.parametrize("age", [0, 1, 18, 65, 150])
+    def test_age_valid(age):
+        assert validate_age(age) == age
+
+    # Test 2: wrong types rejected
+    @pytest.mark.parametrize("bad_value", [
+        "30",        # string
+        30.0,        # float
+        None,        # None
+        [30],        # list
+        True,        # bool (bool IS int — may need explicit check)
+    ])
+    def test_age_wrong_type(bad_value):
+        with pytest.raises(TypeError):
+            validate_age(bad_value)
+
+    # Test 3: out-of-range rejected
+    @pytest.mark.parametrize("bad_age", [-1, 151, -100, 1000])
+    def test_age_out_of_range(bad_age):
+        with pytest.raises(ValueError):
+            validate_age(bad_age)
+
+STRING FIELD VALIDATION
+------------------------
+    def validate_username(name):
+        if name is None:
+            raise TypeError("username cannot be None")
+        if not isinstance(name, str):
+            raise TypeError(f"username must be str, got {type(name).__name__}")
+        if not name.strip():
+            raise ValueError("username cannot be empty or whitespace")
+        if len(name) > 50:
+            raise ValueError(f"username too long: {len(name)} > 50")
+        return name.strip()
+
+    @pytest.mark.parametrize("name", ["alice", "Bob_123", "x" * 50])
+    def test_username_valid(name):
+        result = validate_username(name)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    @pytest.mark.parametrize("bad, exc", [
+        (None,      TypeError),
+        (42,        TypeError),
+        ("",        ValueError),
+        ("   ",     ValueError),
+        ("\t\n",    ValueError),
+        ("x" * 51, ValueError),
+    ])
+    def test_username_invalid(bad, exc):
+        with pytest.raises(exc):
+            validate_username(bad)
+
+EMAIL VALIDATION
+----------------
+    import re
+
+    EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+    def validate_email(email):
+        if not isinstance(email, str):
+            raise TypeError("email must be a string")
+        if not EMAIL_PATTERN.match(email):
+            raise ValueError(f"Invalid email: {email!r}")
+        return email.lower()
+
+    @pytest.mark.parametrize("email", [
+        "user@example.com",
+        "User.Name+tag@domain.co.uk",
+        "test123@sub.domain.org",
+    ])
+    def test_valid_email(email):
+        result = validate_email(email)
+        assert "@" in result
+        assert result == email.lower()
+
+    @pytest.mark.parametrize("bad_email", [
+        "",
+        "notanemail",
+        "@nodomain.com",
+        "missing@",
+        "two@@signs.com",
+        "spaces in@email.com",
+        None,
+    ])
+    def test_invalid_email(bad_email):
+        with pytest.raises((ValueError, TypeError)):
+            validate_email(bad_email)
+
+NUMERIC INPUT FROM STRING (USER / FILE INPUT)
+----------------------------------------------
+    def parse_positive_int(raw):
+        if raw is None or not isinstance(raw, str):
+            raise TypeError("input must be a string")
+        raw = raw.strip()
+        if not raw:
+            raise ValueError("input cannot be empty")
+        try:
+            value = int(raw)
+        except ValueError:
+            raise ValueError(f"Not a valid integer: {raw!r}")
+        if value <= 0:
+            raise ValueError(f"Must be positive, got {value}")
+        return value
+
+    @pytest.mark.parametrize("raw, expected", [
+        ("1",    1),
+        ("42",   42),
+        (" 10 ", 10),    # leading/trailing whitespace stripped
+        ("1000", 1000),
+    ])
+    def test_parse_positive_int_valid(raw, expected):
+        assert parse_positive_int(raw) == expected
+
+    @pytest.mark.parametrize("bad_raw", [
+        "",
+        "   ",
+        "abc",
+        "1.5",
+        "0",
+        "-1",
+        None,
+        "1e5",
+        "1_000",   # underscore notation
+    ])
+    def test_parse_positive_int_invalid(bad_raw):
+        with pytest.raises((TypeError, ValueError)):
+            parse_positive_int(bad_raw)
+
+DATE INPUT VALIDATION
+---------------------
+    from datetime import datetime
+
+    def parse_date(raw, fmt="%Y-%m-%d"):
+        if not isinstance(raw, str):
+            raise TypeError("date must be a string")
+        raw = raw.strip()
+        if not raw:
+            raise ValueError("date cannot be empty")
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            raise ValueError(f"Invalid date {raw!r}, expected format {fmt}")
+
+    @pytest.mark.parametrize("raw", [
+        "2024-01-01",
+        "2000-02-29",   # leap year
+        "1999-12-31",
+    ])
+    def test_parse_date_valid(raw):
+        result = parse_date(raw)
+        assert isinstance(result, datetime)
+
+    @pytest.mark.parametrize("bad_date", [
+        "",
+        "01/01/2024",    # wrong format
+        "2024-13-01",    # month 13
+        "2024-02-30",    # Feb 30
+        "2023-02-29",    # 2023 not a leap year
+        "not-a-date",
+        None,
+        "2024-1-1",      # no zero-padding
+    ])
+    def test_parse_date_invalid(bad_date):
+        with pytest.raises((TypeError, ValueError)):
+            parse_date(bad_date)
+
+BULK INPUT VALIDATION (LIST OF RECORDS)
+-----------------------------------------
+    def validate_records(records):
+        if not isinstance(records, list):
+            raise TypeError("records must be a list")
+        if len(records) == 0:
+            raise ValueError("records cannot be empty")
+        errors = []
+        for i, r in enumerate(records):
+            if not isinstance(r, dict):
+                errors.append(f"Record {i}: must be a dict")
+            elif "id" not in r:
+                errors.append(f"Record {i}: missing 'id' field")
+        if errors:
+            raise ValueError(f"Validation errors: {errors}")
+        return records
+
+    def test_validate_records_valid():
+        records = [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
+        result = validate_records(records)
+        assert len(result) == 2
+
+    def test_validate_records_empty():
+        with pytest.raises(ValueError, match="cannot be empty"):
+            validate_records([])
+
+    def test_validate_records_not_list():
+        with pytest.raises(TypeError):
+            validate_records({"id": 1})
+
+    def test_validate_records_missing_field():
+        with pytest.raises(ValueError, match="missing 'id'"):
+            validate_records([{"name": "Alice"}])
+
+
+----------------------------------------------------------------
+SECTION 3: MISSING FILES
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Missing files are the most common I/O failure in production.
+Every function that opens a file must be tested with a path that
+does not exist. The function must raise a clear exception and
+must NOT silently return empty data or None without warning.
+
+FILE NOT FOUND TEST CASES
+---------------------------
+    import pytest
+    from pathlib import Path
+
+    MISSING_PATH = "/no/such/file/exists_xyz.txt"
+
+    # Test 1: missing file raises FileNotFoundError
+    def test_read_missing_file_raises():
+        with pytest.raises(FileNotFoundError):
+            read_file(MISSING_PATH)
+
+    # Test 2: FileNotFoundError is subclass of OSError
+    def test_read_missing_file_is_oserror():
+        with pytest.raises(OSError):
+            read_file(MISSING_PATH)
+
+    # Test 3: error message contains path
+    def test_missing_file_error_message():
+        with pytest.raises(FileNotFoundError) as exc_info:
+            read_file("/no/such/path.txt")
+        assert "/no/such/path.txt" in str(exc_info.value) or True
+        # At minimum: exception is FileNotFoundError, message is informative
+
+    # Test 4: missing directory in path
+    def test_write_missing_directory_raises(tmp_path):
+        f = tmp_path / "no_such_dir" / "file.txt"
+        with pytest.raises((FileNotFoundError, OSError)):
+            write_file(f, "data")
+
+    # Test 5: path is None
+    def test_read_none_path_raises():
+        with pytest.raises((TypeError, AttributeError, OSError)):
+            read_file(None)
+
+    # Test 6: path is empty string
+    def test_read_empty_path_raises():
+        with pytest.raises((FileNotFoundError, OSError, ValueError)):
+            read_file("")
+
+    # Test 7: path exists but is a directory, not a file
+    def test_read_directory_as_file_raises(tmp_path):
+        with pytest.raises((IsADirectoryError, PermissionError, OSError)):
+            read_file(tmp_path)   # tmp_path is a directory
+
+MISSING FILE HANDLING PATTERNS
+--------------------------------
+    # Pattern 1: raise explicitly with custom message
+    def read_config(path):
+        try:
+            return open(path).read()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Config file not found: {path}")
+
+    def test_config_missing_raises_with_message():
+        with pytest.raises(FileNotFoundError, match="Config file not found"):
+            read_config("/no/config.yaml")
+
+    # Pattern 2: return default on missing
+    def read_config_or_default(path, default=None):
+        try:
+            return open(path).read()
+        except FileNotFoundError:
+            return default
+
+    def test_config_missing_returns_default():
+        result = read_config_or_default("/no/such/file.txt", default="{}")
+        assert result == "{}"
+
+    def test_config_missing_returns_none_by_default():
+        result = read_config_or_default("/no/such/file.txt")
+        assert result is None
+
+    # Pattern 3: check existence before opening
+    def read_if_exists(path):
+        p = Path(path)
+        if not p.exists():
+            return None
+        return p.read_text()
+
+    def test_read_if_exists_missing():
+        result = read_if_exists("/no/such/file.txt")
+        assert result is None
+
+    def test_read_if_exists_present(tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("hello")
+        assert read_if_exists(f) == "hello"
+
+PERMISSION ERRORS
+------------------
+    import os
+    import stat
+
+    def test_read_no_permission_raises(tmp_path):
+        f = tmp_path / "noperm.txt"
+        f.write_text("data")
+        f.chmod(0o000)   # remove all permissions
+        try:
+            with pytest.raises(PermissionError):
+                read_file(f)
+        finally:
+            f.chmod(0o644)   # restore so cleanup works
+
+    def test_write_no_permission_raises(tmp_path):
+        f = tmp_path / "readonly.txt"
+        f.write_text("existing")
+        f.chmod(stat.S_IREAD)   # read-only
+        try:
+            with pytest.raises(PermissionError):
+                write_file(f, "new data")
+        finally:
+            f.chmod(0o644)
+
+PARAMETRIZE MISSING FILE PATTERNS
+------------------------------------
+    @pytest.mark.parametrize("bad_path", [
+        "/no/such/file.txt",
+        "/tmp/definitely_does_not_exist_xyz_123.txt",
+        "relative/missing/path.txt",
+    ])
+    def test_various_missing_paths_raise(bad_path):
+        with pytest.raises((FileNotFoundError, OSError)):
+            read_file(bad_path)
+
+
+----------------------------------------------------------------
+SECTION 4: INCORRECT FORMATS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Incorrect format tests validate that functions parsing structured
+data (JSON, CSV, YAML, XML, custom formats) fail gracefully when
+the input is malformed, truncated, or contains unexpected values.
+Always test: completely wrong format, partially valid format,
+correct format with wrong field types, and empty content.
+
+JSON FORMAT TESTS
+------------------
+    import json
+    import pytest
+
+    def parse_json_config(raw):
+        if not isinstance(raw, str):
+            raise TypeError("input must be a string")
+        if not raw.strip():
+            raise ValueError("input cannot be empty")
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {e}") from e
+
+    # Valid cases
+    @pytest.mark.parametrize("raw", [
+        '{"key": "value"}',
+        '{"a": 1, "b": [1, 2, 3]}',
+        '[]',
+        '{}',
+        '"just a string"',
+    ])
+    def test_valid_json(raw):
+        result = parse_json_config(raw)
+        assert result is not None
+
+    # Invalid cases
+    @pytest.mark.parametrize("bad_json", [
+        "",
+        "   ",
+        "{key: value}",         # missing quotes
+        "{'key': 'value'}",     # single quotes (Python dict, not JSON)
+        "{",                    # truncated
+        "undefined",            # JavaScript value
+        "None",                 # Python value
+        "True",                 # Python bool (not JSON true)
+        "NaN",                  # not valid JSON
+        "Infinity",             # not valid JSON
+    ])
+    def test_invalid_json(bad_json):
+        with pytest.raises((ValueError, TypeError)):
+            parse_json_config(bad_json)
+
+    # Correct JSON but wrong structure
+    def parse_user_json(raw):
+        data = parse_json_config(raw)
+        if not isinstance(data, dict):
+            raise ValueError("Expected a JSON object")
+        if "name" not in data:
+            raise ValueError("Missing required field: name")
+        if not isinstance(data.get("age"), int):
+            raise ValueError("Field 'age' must be an integer")
+        return data
+
+    def test_user_json_valid():
+        result = parse_user_json('{"name": "Alice", "age": 30}')
+        assert result["name"] == "Alice"
+
+    def test_user_json_missing_field():
+        with pytest.raises(ValueError, match="Missing required field"):
+            parse_user_json('{"age": 30}')
+
+    def test_user_json_wrong_field_type():
+        with pytest.raises(ValueError, match="must be an integer"):
+            parse_user_json('{"name": "Alice", "age": "thirty"}')
+
+    def test_user_json_array_not_object():
+        with pytest.raises(ValueError, match="Expected a JSON object"):
+            parse_user_json('[1, 2, 3]')
+
+CSV FORMAT TESTS
+-----------------
+    import io
+    import csv
+
+    def parse_csv_records(raw, required_fields=None):
+        if not raw or not raw.strip():
+            raise ValueError("CSV content cannot be empty")
+        reader = csv.DictReader(io.StringIO(raw))
+        rows = list(reader)
+        if required_fields:
+            for field in required_fields:
+                if field not in (reader.fieldnames or []):
+                    raise ValueError(f"Missing required column: {field}")
+        return rows
+
+    # Valid
+    def test_csv_valid_content():
+        raw = "name,age\nAlice,30\nBob,25"
+        rows = parse_csv_records(raw, required_fields=["name", "age"])
+        assert len(rows) == 2
+
+    # Empty
+    def test_csv_empty_raises():
+        with pytest.raises(ValueError, match="cannot be empty"):
+            parse_csv_records("")
+
+    # Missing required column
+    def test_csv_missing_column():
+        raw = "name\nAlice\nBob"
+        with pytest.raises(ValueError, match="Missing required column"):
+            parse_csv_records(raw, required_fields=["name", "age"])
+
+    # Wrong delimiter
+    def test_csv_semicolon_delimiter_parsed_incorrectly():
+        raw = "name;age\nAlice;30"
+        rows = parse_csv_records(raw)   # parsed as one column "name;age"
+        assert rows[0].get("name") is None or ";" in list(rows[0].keys())[0]
+
+    # Quoted fields with commas
+    def test_csv_quoted_commas():
+        raw = 'name,city\n"Smith, John","New York, NY"'
+        rows = parse_csv_records(raw)
+        assert rows[0]["name"] == "Smith, John"
+
+    # Too few fields in row
+    def test_csv_missing_field_in_row():
+        raw = "name,age,city\nAlice,30\n"   # Bob missing city
+        rows = parse_csv_records(raw)
+        assert rows[0].get("city") is None or rows[0]["city"] == ""
+
+FILE FORMAT TESTS (CUSTOM / LINE-BASED)
+-----------------------------------------
+    def parse_key_value_file(content):
+        """Parse KEY=VALUE format, one per line."""
+        result = {}
+        for i, line in enumerate(content.splitlines(), start=1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue   # skip empty lines and comments
+            if "=" not in line:
+                raise ValueError(f"Line {i}: missing '=' separator: {line!r}")
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if not key:
+                raise ValueError(f"Line {i}: empty key")
+            result[key] = value.strip()
+        return result
+
+    # Valid cases
+    @pytest.mark.parametrize("content, expected", [
+        ("KEY=value",              {"KEY": "value"}),
+        ("A=1\nB=2",               {"A": "1", "B": "2"}),
+        ("# comment\nA=1",         {"A": "1"}),      # comment skipped
+        ("\nA=1\n\n",              {"A": "1"}),       # blank lines skipped
+        ("K=",                     {"K": ""}),         # empty value OK
+        ("K=a=b",                  {"K": "a=b"}),     # value contains =
+    ])
+    def test_kv_parse_valid(content, expected):
+        assert parse_key_value_file(content) == expected
+
+    # Invalid cases
+    @pytest.mark.parametrize("bad_content, match", [
+        ("no_separator",        "missing '='"),
+        ("=no_key",             "empty key"),
+        ("  =whitespace_key",   "empty key"),
+    ])
+    def test_kv_parse_invalid(bad_content, match):
+        with pytest.raises(ValueError, match=match):
+            parse_key_value_file(bad_content)
+
+    def test_kv_parse_empty_content():
+        result = parse_key_value_file("")
+        assert result == {}
+
+    def test_kv_parse_only_comments():
+        result = parse_key_value_file("# this is a comment\n# another")
+        assert result == {}
+
+NUMERIC FORMAT PARSING
+-----------------------
+    def parse_numeric_field(raw, field_name="value"):
+        if raw is None:
+            raise TypeError(f"{field_name} cannot be None")
+        raw = str(raw).strip()
+        if not raw:
+            raise ValueError(f"{field_name} cannot be empty")
+        try:
+            return float(raw)
+        except ValueError:
+            raise ValueError(f"{field_name}: cannot parse {raw!r} as number")
+
+    @pytest.mark.parametrize("raw, expected", [
+        ("1",       1.0),
+        ("1.5",     1.5),
+        ("-3.14",   -3.14),
+        ("  42  ",  42.0),
+        ("1e3",     1000.0),
+        ("0",       0.0),
+    ])
+    def test_parse_numeric_valid(raw, expected):
+        from pytest import approx
+        assert parse_numeric_field(raw) == approx(expected)
+
+    @pytest.mark.parametrize("bad_raw", [
+        "",
+        "   ",
+        "abc",
+        "1,000",     # locale-formatted
+        "1.2.3",
+        "NaN",       # could be allowed — depends on spec
+        "inf",       # could be allowed — depends on spec
+        None,
+    ])
+    def test_parse_numeric_invalid(bad_raw):
+        with pytest.raises((TypeError, ValueError)):
+            parse_numeric_field(bad_raw)
+
+TRUNCATED / PARTIAL FILE CONTENT
+----------------------------------
+    import json
+
+    def test_truncated_json_raises():
+        truncated = '{"name": "Alice", "age":'   # cut off mid-value
+        with pytest.raises((ValueError, json.JSONDecodeError)):
+            parse_json_config(truncated)
+
+    def test_truncated_csv_row(tmp_path):
+        f = tmp_path / "truncated.csv"
+        f.write_bytes(b"name,age\nAlice,30\nBob")   # Bob's row cut off
+        rows = parse_csv_records(f.read_text())
+        # Bob row: missing 'age' field — should be None or "" not crash
+        assert len(rows) == 2
+        assert rows[1].get("age") is None or rows[1]["age"] == ""
+
+    def test_binary_file_read_as_text_raises(tmp_path):
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"\xff\xfe\x00\x01")   # non-UTF-8 bytes
+        with pytest.raises((UnicodeDecodeError, ValueError)):
+            f.read_text(encoding="utf-8")   # strict UTF-8 fails
+
+    def test_binary_file_read_with_errors_replace(tmp_path):
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"hello\xff world")
+        content = f.read_text(encoding="utf-8", errors="replace")
+        assert "hello" in content
+        assert "\ufffd" in content   # replacement character for invalid byte
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+FILE HANDLING — MUST TEST
+    empty file           → [] or "" not crash
+    single line          → 1 element, no trailing newline
+    CRLF endings         → strip \r correctly
+    binary data          → read_bytes(), not read_text()
+    write and read back  → content exactly matches
+    append               → both appends present, in order
+    large file           → use generator, not readlines() into memory
+    file always closed   → test with context manager + exception
+
+MISSING FILES — MUST TEST
+    path not found       → FileNotFoundError (subclass of OSError)
+    path is None         → TypeError or AttributeError
+    path is ""           → FileNotFoundError or ValueError
+    path is directory    → IsADirectoryError or PermissionError
+    no read permission   → PermissionError
+    custom error message → match path in exception message
+
+INPUT VALIDATION — MUST TEST
+    None input           → TypeError
+    wrong type           → TypeError
+    empty string         → ValueError
+    whitespace only      → ValueError
+    boundary values      → min valid, max valid, min-1, max+1
+    correct type + bad value → ValueError
+    bulk records empty   → ValueError
+    bulk records wrong type → TypeError with index
+
+FORMAT ERRORS — MUST TEST
+    completely wrong format     → ValueError or JSONDecodeError
+    truncated content           → ValueError or parse error
+    correct format wrong fields → ValueError with field name
+    missing required column     → ValueError
+    wrong field type in record  → ValueError
+    binary read as text         → UnicodeDecodeError
+    empty string                → ValueError (not crash, not empty result)
+    single-quote JSON           → invalid JSON → ValueError
+    NaN / Infinity in JSON      → invalid JSON → ValueError
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

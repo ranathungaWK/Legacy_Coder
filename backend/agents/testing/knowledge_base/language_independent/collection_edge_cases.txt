@@ -1,0 +1,909 @@
+================================================================
+COLLECTION EDGE CASES - KNOWLEDGE BASE
+================================================================
+A focused reference for collection edge cases in Python testing.
+Covers empty collections, single-element collections, duplicates,
+nested collections, and None elements. Designed for RAG-based
+test case generation agents. All examples are in Python (pytest).
+================================================================
+
+
+----------------------------------------------------------------
+SECTION 1: EMPTY COLLECTIONS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Empty collections are among the most common edge cases. Functions
+that iterate, aggregate, search, or reduce collections must
+explicitly handle the case where the collection has zero elements.
+All empty collections in Python are falsy.
+
+EMPTY LIST
+----------
+    lst = []
+    assert lst == []
+    assert len(lst) == 0
+    assert not lst                  # falsy
+    assert list(reversed([])) == []
+    assert sorted([]) == []
+    assert sum([]) == 0
+
+    # Operations that raise on empty:
+    import pytest
+    with pytest.raises(ValueError):
+        max([])             # no max of empty sequence
+    with pytest.raises(ValueError):
+        min([])
+    with pytest.raises(ValueError):
+        statistics.mean([])
+
+    # Iteration — zero passes through loop body:
+    count = 0
+    for _ in []:
+        count += 1
+    assert count == 0
+
+    # Slicing empty list — always returns empty, never raises:
+    assert [][0:10] == []
+    assert [][:] == []
+    assert [][100:200] == []
+
+    # Index access raises:
+    with pytest.raises(IndexError):
+        _ = [][0]
+
+EMPTY DICT
+----------
+    d = {}
+    assert d == {}
+    assert len(d) == 0
+    assert not d                    # falsy
+    assert list(d.keys()) == []
+    assert list(d.values()) == []
+    assert list(d.items()) == []
+    assert d.get("key") is None
+    assert d.get("key", "default") == "default"
+
+    with pytest.raises(KeyError):
+        _ = d["missing"]
+
+    # Iteration:
+    for k, v in {}.items():
+        assert False    # never reached
+
+EMPTY SET
+---------
+    s = set()
+    assert s == set()
+    assert len(s) == 0
+    assert not s                    # falsy
+    assert s | {1} == {1}           # union with empty
+    assert s & {1} == set()         # intersection with empty is empty
+    assert s - {1} == set()         # difference with empty is empty
+    assert {1}.issubset(s) is False
+    assert s.issubset({1}) is True  # empty is subset of everything
+
+EMPTY TUPLE
+-----------
+    t = ()
+    assert t == ()
+    assert len(t) == 0
+    assert not t                    # falsy
+    assert t + (1,) == (1,)
+    assert t * 5 == ()
+
+    with pytest.raises(IndexError):
+        _ = t[0]
+
+EMPTY STRING (AS SEQUENCE)
+---------------------------
+    s = ""
+    assert list(s) == []
+    assert len(s) == 0
+    assert not s
+    assert s[:] == ""
+    assert s + "hello" == "hello"
+
+EMPTY GENERATOR / ITERATOR
+----------------------------
+    def empty_gen():
+        return
+        yield   # makes it a generator
+
+    gen = empty_gen()
+    assert list(gen) == []
+
+    with pytest.raises(StopIteration):
+        next(empty_gen())
+
+    # next() with default:
+    assert next(iter([]), "sentinel") == "sentinel"
+
+FUNCTIONS THAT RETURN EMPTY COLLECTIONS
+-----------------------------------------
+    def filter_evens(nums):
+        return [x for x in nums if x % 2 == 0]
+
+    assert filter_evens([]) == []
+    assert filter_evens([1, 3, 5]) == []    # no evens
+    assert filter_evens([2, 4, 6]) == [2, 4, 6]
+
+PYTEST TEST CASES FOR EMPTY COLLECTIONS
+-----------------------------------------
+    import pytest
+
+    @pytest.mark.parametrize("collection", [
+        [],
+        {},
+        set(),
+        (),
+        "",
+    ])
+    def test_empty_collection_is_falsy(collection):
+        assert not collection
+
+    @pytest.mark.parametrize("func, empty_input, expected", [
+        (sum,    [],    0),
+        (sorted, [],    []),
+        (list,   [],    []),
+        (len,    [],    0),
+        (len,    {},    0),
+        (len,    set(), 0),
+    ])
+    def test_safe_operations_on_empty(func, empty_input, expected):
+        assert func(empty_input) == expected
+
+    def test_max_raises_on_empty():
+        with pytest.raises(ValueError):
+            max([])
+
+    def test_process_returns_empty_on_empty_input():
+        assert process([]) == []
+
+
+----------------------------------------------------------------
+SECTION 2: SINGLE-ELEMENT COLLECTIONS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Single-element collections break logic that assumes multiple
+elements: comparisons, splits, middle-finding, pair-wise
+operations, and loops that expect at least two iterations.
+Always test with exactly one element.
+
+SINGLE-ELEMENT LIST
+--------------------
+    lst = [42]
+    assert len(lst) == 1
+    assert lst[0] == 42
+    assert lst[-1] == 42            # same element
+    assert lst[0] == lst[-1]
+    assert max(lst) == 42
+    assert min(lst) == 42
+    assert sum(lst) == 42
+    assert sorted(lst) == [42]
+    assert list(reversed(lst)) == [42]
+
+    # Slices:
+    assert lst[1:] == []            # tail of single-element is empty
+    assert lst[:0] == []            # head before index 0 is empty
+    assert lst[0:1] == [42]
+    assert lst[:] == [42]
+
+    # Pair-wise operation breaks on single element:
+    def differences(lst):
+        return [lst[i+1] - lst[i] for i in range(len(lst) - 1)]
+
+    assert differences([42]) == []          # no pairs → empty
+    assert differences([1, 3, 6]) == [2, 3]
+
+SINGLE-ELEMENT DICT
+--------------------
+    d = {"only": 1}
+    assert len(d) == 1
+    assert list(d.keys()) == ["only"]
+    assert list(d.values()) == [1]
+    assert d.get("only") == 1
+    assert d.get("missing") is None
+
+SINGLE-ELEMENT SET
+------------------
+    s = {99}
+    assert len(s) == 1
+    assert 99 in s
+    assert s | {1} == {1, 99}
+    assert s & {99} == {99}
+    assert s - {99} == set()
+
+SINGLE-ELEMENT TUPLE
+---------------------
+    # Single-element tuple requires trailing comma!
+    t = (42,)
+    assert t == (42,)
+    assert len(t) == 1
+    assert t[0] == 42
+
+    # Without comma — NOT a tuple:
+    not_tuple = (42)
+    assert isinstance(not_tuple, int)   # it's just 42 in parens
+
+LOOP BEHAVIOR WITH SINGLE ELEMENT
+-----------------------------------
+    def process_pairs(items):
+        results = []
+        for i in range(len(items) - 1):
+            results.append(items[i] + items[i+1])
+        return results
+
+    assert process_pairs([]) == []
+    assert process_pairs([5]) == []       # one element → no pairs
+    assert process_pairs([5, 3]) == [8]
+    assert process_pairs([1, 2, 3]) == [3, 5]
+
+MEDIAN OF SINGLE ELEMENT
+-------------------------
+    import statistics
+    assert statistics.median([42]) == 42
+    assert statistics.mean([42]) == 42
+    assert statistics.mode([42]) == 42
+
+SINGLE-ELEMENT IN SORTING
+--------------------------
+    assert sorted([99]) == [99]
+    assert sorted([99], reverse=True) == [99]
+    assert sorted([99], key=lambda x: -x) == [99]
+
+UNPACKING SINGLE ELEMENT
+-------------------------
+    lst = [42]
+    (only,) = lst   # works
+    assert only == 42
+
+    with pytest.raises(ValueError):
+        a, b = lst   # too few values to unpack
+
+PYTEST TEST CASES FOR SINGLE ELEMENT
+--------------------------------------
+    import pytest
+
+    @pytest.mark.parametrize("lst, expected_max, expected_min", [
+        ([5],     5, 5),
+        ([0],     0, 0),
+        ([-1],   -1, -1),
+        ([1000], 1000, 1000),
+    ])
+    def test_single_element_max_min(lst, expected_max, expected_min):
+        assert max(lst) == expected_max
+        assert min(lst) == expected_min
+
+    def test_single_element_sort_unchanged():
+        lst = [42]
+        assert sorted(lst) == lst
+
+    def test_aggregate_on_single_element():
+        assert sum([7]) == 7
+        assert len([7]) == 1
+
+    def test_no_pairs_from_single_element():
+        assert pairwise_sum([42]) == []
+
+
+----------------------------------------------------------------
+SECTION 3: DUPLICATES
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Duplicate elements expose incorrect assumptions about uniqueness.
+Functions that compute counts, build sets, find unique elements,
+or sort must handle lists where values repeat.
+
+DUPLICATES IN LISTS
+--------------------
+    lst = [1, 2, 2, 3, 3, 3]
+    assert len(lst) == 6
+    assert lst.count(2) == 2
+    assert lst.count(3) == 3
+    assert lst.count(9) == 0
+    assert sorted(lst) == [1, 2, 2, 3, 3, 3]
+
+    # Deduplicate with set (loses order):
+    assert set(lst) == {1, 2, 3}
+
+    # Deduplicate preserving order:
+    def unique_ordered(items):
+        seen = set()
+        return [x for x in items if not (x in seen or seen.add(x))]
+
+    assert unique_ordered([1, 2, 2, 3, 1]) == [1, 2, 3]
+    assert unique_ordered([]) == []
+    assert unique_ordered([5]) == [5]
+
+ALL DUPLICATES (SINGLE UNIQUE VALUE)
+--------------------------------------
+    lst = [7, 7, 7, 7]
+    assert set(lst) == {7}
+    assert sorted(lst) == [7, 7, 7, 7]
+    assert max(lst) == 7
+    assert min(lst) == 7
+    assert list(dict.fromkeys(lst)) == [7]  # dedup preserving order
+
+DUPLICATES IN SORTING
+---------------------
+    # Stable sort preserves original order of equal elements:
+    data = [("b", 2), ("a", 1), ("b", 1), ("a", 2)]
+    result = sorted(data, key=lambda x: x[0])
+    # Elements with same key stay in original relative order:
+    assert result == [("a", 1), ("a", 2), ("b", 2), ("b", 1)]
+
+DUPLICATE KEYS IN DICT
+-----------------------
+    # Dict keys are unique — later value wins:
+    d = {"a": 1, "a": 2}
+    assert d == {"a": 2}
+
+    # Counting duplicates with Counter:
+    from collections import Counter
+    lst = ["a", "b", "a", "c", "b", "a"]
+    c = Counter(lst)
+    assert c["a"] == 3
+    assert c["b"] == 2
+    assert c["c"] == 1
+    assert c["z"] == 0    # missing key returns 0, not KeyError
+
+DUPLICATE DETECTION PATTERNS
+------------------------------
+    def has_duplicates(lst):
+        return len(lst) != len(set(lst))
+
+    assert has_duplicates([1, 2, 3]) is False
+    assert has_duplicates([1, 2, 2]) is True
+    assert has_duplicates([]) is False
+    assert has_duplicates([1]) is False
+
+    def find_duplicates(lst):
+        seen = set()
+        dupes = set()
+        for x in lst:
+            if x in seen:
+                dupes.add(x)
+            seen.add(x)
+        return dupes
+
+    assert find_duplicates([1, 2, 2, 3, 3]) == {2, 3}
+    assert find_duplicates([1, 2, 3]) == set()
+    assert find_duplicates([]) == set()
+
+DUPLICATES WITH NONE AND SPECIAL VALUES
+-----------------------------------------
+    lst = [None, None, 1, None]
+    assert lst.count(None) == 3
+    assert set(lst) == {None, 1}
+
+    lst_with_nan = [float("nan"), float("nan"), 1.0]
+    # NaN is not equal to itself — set() keeps duplicates:
+    s = set(lst_with_nan)
+    assert 1.0 in s
+    # NaN behavior in sets is implementation-defined
+
+PYTEST TEST CASES FOR DUPLICATES
+----------------------------------
+    import pytest
+    from collections import Counter
+
+    @pytest.mark.parametrize("lst, has_dupes", [
+        ([],          False),
+        ([1],         False),
+        ([1, 2, 3],   False),
+        ([1, 1],      True),
+        ([1, 2, 1],   True),
+        ([1, 1, 1],   True),
+    ])
+    def test_has_duplicates(lst, has_dupes):
+        assert has_duplicates(lst) == has_dupes
+
+    def test_counter_on_all_same():
+        c = Counter([5, 5, 5])
+        assert c[5] == 3
+        assert len(c) == 1
+
+    def test_unique_preserves_first_occurrence():
+        result = unique_ordered([3, 1, 2, 1, 3])
+        assert result == [3, 1, 2]
+
+    def test_sort_stable_with_duplicates():
+        data = [(1, "b"), (1, "a"), (2, "c")]
+        result = sorted(data, key=lambda x: x[0])
+        assert result[0] == (1, "b")    # original order preserved
+
+
+----------------------------------------------------------------
+SECTION 4: NESTED COLLECTIONS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Nested collections (lists of lists, dicts of dicts, mixed nesting)
+expose bugs in recursive functions, deep copy/equality, depth-first
+traversal, and serialization. Test both shallow and deep nesting.
+
+NESTED LISTS
+------------
+    nested = [[1, 2], [3, 4], [5, 6]]
+    assert len(nested) == 3
+    assert nested[0] == [1, 2]
+    assert nested[0][0] == 1
+    assert nested[-1][-1] == 6
+
+    # Flatten one level:
+    flat = [x for sublist in nested for x in sublist]
+    assert flat == [1, 2, 3, 4, 5, 6]
+
+    # Deep flatten (recursive):
+    def flatten(lst):
+        result = []
+        for item in lst:
+            if isinstance(item, list):
+                result.extend(flatten(item))
+            else:
+                result.append(item)
+        return result
+
+    assert flatten([1, [2, [3, [4]]]]) == [1, 2, 3, 4]
+    assert flatten([]) == []
+    assert flatten([[]]) == []
+    assert flatten([1, 2, 3]) == [1, 2, 3]
+
+JAGGED / IRREGULAR NESTED LISTS
+---------------------------------
+    jagged = [[1], [2, 3], [4, 5, 6], []]
+    assert len(jagged) == 4
+    assert jagged[0] == [1]
+    assert jagged[3] == []
+
+    # Row lengths differ:
+    lengths = [len(row) for row in jagged]
+    assert lengths == [1, 2, 3, 0]
+    assert max(lengths) == 3
+    assert min(lengths) == 0
+
+NESTED DICTS
+------------
+    config = {
+        "database": {
+            "host": "localhost",
+            "port": 5432,
+            "credentials": {
+                "user": "admin",
+                "pass": "secret",
+            }
+        },
+        "cache": {
+            "ttl": 300,
+        }
+    }
+
+    assert config["database"]["port"] == 5432
+    assert config["database"]["credentials"]["user"] == "admin"
+    assert config["cache"]["ttl"] == 300
+    assert config.get("missing") is None
+    assert config["database"].get("timeout") is None
+
+    # Deep get pattern:
+    def deep_get(d, *keys, default=None):
+        for key in keys:
+            if not isinstance(d, dict):
+                return default
+            d = d.get(key, default)
+        return d
+
+    assert deep_get(config, "database", "port") == 5432
+    assert deep_get(config, "database", "missing") is None
+    assert deep_get(config, "nope", "nope") is None
+
+SHALLOW VS DEEP COPY
+---------------------
+    import copy
+
+    original = [[1, 2], [3, 4]]
+
+    # Shallow copy — inner lists shared:
+    shallow = original.copy()
+    shallow[0].append(99)
+    assert original[0] == [1, 2, 99]   # original is modified!
+
+    # Deep copy — fully independent:
+    original = [[1, 2], [3, 4]]
+    deep = copy.deepcopy(original)
+    deep[0].append(99)
+    assert original[0] == [1, 2]       # original unchanged
+
+EQUALITY OF NESTED COLLECTIONS
+--------------------------------
+    assert [[1, 2], [3, 4]] == [[1, 2], [3, 4]]
+    assert [[1, 2], [3, 4]] != [[1, 2], [3, 5]]   # one element differs
+    assert {"a": {"b": 1}} == {"a": {"b": 1}}
+    assert {"a": {"b": 1}} != {"a": {"b": 2}}
+
+    # Nested with different structures:
+    assert [[1, [2]]] != [[1, 2]]
+
+DEEPLY NESTED STRUCTURES (RECURSION LIMIT)
+-------------------------------------------
+    import sys
+    import pytest
+
+    # Default recursion limit is 1000:
+    assert sys.getrecursionlimit() == 1000
+
+    # Deeply nested structure that causes RecursionError:
+    def make_deep(depth):
+        result = []
+        current = result
+        for _ in range(depth):
+            new = []
+            current.append(new)
+            current = new
+        return result
+
+    deep = make_deep(500)   # safe
+    assert isinstance(deep, list)
+
+    with pytest.raises(RecursionError):
+        flatten_recursive(make_deep(2000))   # too deep
+
+    # Safe deep flatten using a stack (iterative):
+    def flatten_iterative(lst):
+        stack = [lst]
+        result = []
+        while stack:
+            item = stack.pop()
+            if isinstance(item, list):
+                stack.extend(reversed(item))
+            else:
+                result.append(item)
+        return result
+
+NESTED COLLECTIONS WITH EMPTY INNER CONTAINERS
+------------------------------------------------
+    lst = [[], [], []]
+    assert all(len(x) == 0 for x in lst)
+    flat = [x for sub in lst for x in sub]
+    assert flat == []
+
+    nested_dict = {"a": {}, "b": {"c": {}}}
+    assert nested_dict["a"] == {}
+    assert nested_dict["b"]["c"] == {}
+
+MIXED NESTING (LISTS AND DICTS COMBINED)
+-----------------------------------------
+    data = [
+        {"name": "Alice", "scores": [95, 87, 92]},
+        {"name": "Bob",   "scores": []},
+        {"name": "Carol", "scores": [100]},
+    ]
+
+    assert data[0]["scores"][0] == 95
+    assert data[1]["scores"] == []
+    assert data[2]["scores"] == [100]
+
+    # Process safely:
+    averages = [
+        sum(d["scores"]) / len(d["scores"]) if d["scores"] else 0
+        for d in data
+    ]
+    from pytest import approx
+    assert averages == approx([91.33, 0.0, 100.0], rel=1e-2)
+
+JSON-LIKE NESTED DATA
+---------------------
+    import json
+
+    payload = {
+        "users": [
+            {"id": 1, "name": "Alice", "tags": ["admin", "user"]},
+            {"id": 2, "name": "Bob",   "tags": []},
+        ],
+        "total": 2,
+    }
+
+    serialized = json.dumps(payload)
+    deserialized = json.loads(serialized)
+    assert deserialized == payload
+    assert deserialized["users"][0]["tags"] == ["admin", "user"]
+    assert deserialized["users"][1]["tags"] == []
+
+PYTEST TEST CASES FOR NESTED COLLECTIONS
+-----------------------------------------
+    import pytest
+    import copy
+
+    def test_flatten_empty_nested():
+        assert flatten([[],[],[]]) == []
+
+    def test_flatten_deep():
+        assert flatten([1, [2, [3, [4, [5]]]]]) == [1, 2, 3, 4, 5]
+
+    def test_flatten_single_element_nested():
+        assert flatten([[42]]) == [42]
+
+    def test_deep_copy_independence():
+        original = [[1, 2], [3, 4]]
+        clone = copy.deepcopy(original)
+        clone[0][0] = 999
+        assert original[0][0] == 1   # unchanged
+
+    def test_nested_dict_deep_get():
+        d = {"a": {"b": {"c": 42}}}
+        assert deep_get(d, "a", "b", "c") == 42
+        assert deep_get(d, "a", "x", "c") is None
+
+    @pytest.mark.parametrize("nested, expected", [
+        ([],             []),
+        ([[1]],          [1]),
+        ([[1, 2], [3]],  [1, 2, 3]),
+        ([[[], []]],     []),
+    ])
+    def test_flatten_parametrized(nested, expected):
+        assert flatten(nested) == expected
+
+
+----------------------------------------------------------------
+SECTION 5: NONE ELEMENTS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Collections containing None values are distinct from empty
+collections. Sorting, aggregation, type checks, and comparisons
+all behave differently when None is an element. Functions must
+explicitly decide how to handle None elements.
+
+NONE IN LISTS
+--------------
+    lst = [1, None, 3, None]
+    assert len(lst) == 4
+    assert None in lst
+    assert lst.count(None) == 2
+    assert lst.index(None) == 1       # first occurrence
+
+    # Filtering out None:
+    clean = [x for x in lst if x is not None]
+    assert clean == [1, 3]
+
+    # Filter with filter():
+    clean = list(filter(None, lst))   # removes None AND falsy values!
+    assert clean == [1, 3]            # also removes 0, "", False
+
+    # Safe filter for only None:
+    clean = list(filter(lambda x: x is not None, lst))
+    assert clean == [1, 3]
+
+NONE IN SORTING
+----------------
+    # Sorting a list with None raises TypeError in Python 3:
+    import pytest
+
+    with pytest.raises(TypeError):
+        sorted([3, None, 1])
+
+    # Sort with None last:
+    lst = [3, None, 1, None, 2]
+    result = sorted(lst, key=lambda x: (x is None, x))
+    assert result == [1, 2, 3, None, None]
+
+    # Sort with None first:
+    result = sorted(lst, key=lambda x: (x is not None, x if x is not None else 0))
+    assert result[0] is None
+    assert result[1] is None
+
+NONE IN AGGREGATION
+--------------------
+    # sum() cannot include None:
+    with pytest.raises(TypeError):
+        sum([1, None, 2])
+
+    # Safe sum:
+    def safe_sum(lst):
+        return sum(x for x in lst if x is not None)
+
+    assert safe_sum([1, None, 2]) == 3
+    assert safe_sum([None, None]) == 0
+    assert safe_sum([]) == 0
+
+    # max() / min() with None:
+    with pytest.raises(TypeError):
+        max([1, None, 2])
+
+    def safe_max(lst):
+        filtered = [x for x in lst if x is not None]
+        return max(filtered) if filtered else None
+
+    assert safe_max([1, None, 3]) == 3
+    assert safe_max([None]) is None
+    assert safe_max([]) is None
+
+NONE AS DICT VALUE
+------------------
+    d = {"a": 1, "b": None, "c": 3}
+    assert "b" in d                  # key exists
+    assert d["b"] is None
+    assert d.get("b") is None        # same result as missing key
+    assert d.get("missing") is None  # ambiguous!
+
+    # Distinguish None value from missing key:
+    MISSING = object()
+    assert d.get("b", MISSING) is None    # key present, value is None
+    assert d.get("x", MISSING) is MISSING # key absent
+
+    # Filter out None values from dict:
+    clean = {k: v for k, v in d.items() if v is not None}
+    assert clean == {"a": 1, "c": 3}
+
+NONE IN SET
+-----------
+    s = {1, None, 3, None}   # None deduped in set
+    assert s == {1, None, 3}
+    assert None in s
+    assert len(s) == 3
+
+NONE IN NESTED COLLECTIONS
+---------------------------
+    nested = [[1, None], [None, 2], [None, None]]
+    assert nested[0][1] is None
+    assert nested[2] == [None, None]
+
+    # Flatten and filter None:
+    all_items = [x for sublist in nested for x in sublist]
+    assert all_items == [1, None, None, 2, None, None]
+
+    non_none = [x for x in all_items if x is not None]
+    assert non_none == [1, 2]
+
+ALL-NONE COLLECTION
+--------------------
+    lst = [None, None, None]
+    assert all(x is None for x in lst)
+    assert any(x is not None for x in lst) is False
+    assert [x for x in lst if x is not None] == []
+    assert sum(1 for x in lst if x is not None) == 0
+
+NONE VS OTHER FALSY VALUES
+---------------------------
+    # None, False, 0, "", [], {} are all falsy — but distinct
+    falsy = [None, False, 0, 0.0, "", [], {}]
+
+    none_only = [x for x in falsy if x is None]
+    assert none_only == [None]
+
+    # filter(None, ...) removes ALL falsy values:
+    result = list(filter(None, falsy))
+    assert result == []    # everything removed
+
+    # Separate checks:
+    assert None is None
+    assert False is not None
+    assert 0 is not None
+    assert "" is not None
+    assert [] is not None
+
+NONE PROPAGATION IN PROCESSING
+--------------------------------
+    def process_value(x):
+        if x is None:
+            return None
+        return x * 2
+
+    results = [process_value(x) for x in [1, None, 3, None]]
+    assert results == [2, None, 6, None]
+
+    # Remove None results:
+    clean = [r for r in results if r is not None]
+    assert clean == [2, 6]
+
+PYTEST TEST CASES FOR NONE ELEMENTS
+-------------------------------------
+    import pytest
+
+    @pytest.mark.parametrize("lst, expected", [
+        ([1, None, 2],    [1, 2]),
+        ([None],          []),
+        ([None, None],    []),
+        ([],              []),
+        ([1, 2, 3],       [1, 2, 3]),
+    ])
+    def test_filter_none(lst, expected):
+        assert [x for x in lst if x is not None] == expected
+
+    @pytest.mark.parametrize("lst, expected_sum", [
+        ([1, None, 2],   3),
+        ([None, None],   0),
+        ([],             0),
+        ([5],            5),
+    ])
+    def test_safe_sum_ignores_none(lst, expected_sum):
+        assert safe_sum(lst) == expected_sum
+
+    def test_sort_raises_with_none():
+        with pytest.raises(TypeError):
+            sorted([3, None, 1])
+
+    def test_sort_none_last():
+        lst = [3, None, 1, None]
+        result = sorted(lst, key=lambda x: (x is None, x))
+        assert result[-1] is None
+        assert result[-2] is None
+        assert result[0] == 1
+
+    def test_none_in_dict_value():
+        d = {"a": None, "b": 2}
+        assert d["a"] is None
+        assert d.get("a", "default") is None    # returns None not default
+        assert d.get("missing", "default") == "default"
+
+    def test_all_none_collection():
+        lst = [None] * 5
+        assert all(x is None for x in lst)
+        assert safe_sum(lst) == 0
+        assert [x for x in lst if x is not None] == []
+
+    @pytest.mark.parametrize("collection", [
+        [None],
+        [None, None],
+        [None, 1, None],
+        {"key": None},
+    ])
+    def test_none_element_detected(collection):
+        if isinstance(collection, list):
+            assert None in collection
+        elif isinstance(collection, dict):
+            assert None in collection.values()
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+EMPTY COLLECTIONS
+    []  {}  set()  ()  ""   all falsy and len==0
+    max([])     → ValueError
+    [][0]       → IndexError
+    [][0:10]    → [] (no error)
+    "".split()  → [] (no arg); "".split(",") → [""] (with sep)
+    next(iter([]), default) → default (safe)
+
+SINGLE ELEMENT
+    lst[-1] == lst[0]  when len==1
+    tuple with one element needs trailing comma: (42,)
+    pairwise ops return [] on single element
+    unpack: (only,) = [42]  — not a, b = [42]
+
+DUPLICATES
+    has_duplicates:  len(lst) != len(set(lst))
+    Counter(lst)    counts occurrences; missing key returns 0
+    sorted() is stable — equal elements keep original order
+    dict.fromkeys(lst) deduplicates preserving order
+    NaN breaks set() deduplication (NaN != NaN)
+
+NESTED COLLECTIONS
+    shallow copy: inner lists still shared — mutations propagate
+    deep copy:    copy.deepcopy() for full independence
+    flatten:      prefer iterative (stack) over recursive (hits recursion limit)
+    deep_get:     wrap chained dict lookups to avoid KeyError chain
+    json roundtrip: json.loads(json.dumps(obj)) == obj for JSON-safe types
+
+NONE ELEMENTS
+    None in lst         detects None in list
+    filter(None, lst)   removes ALL falsy values (not only None)
+    lambda x: x is not None   removes only None
+    sorted([1, None])   → TypeError in Python 3
+    d.get("key") is None  — ambiguous: key missing OR value is None
+    use sentinel = object() to distinguish missing key from None value
+    safe_sum: sum(x for x in lst if x is not None)
+    safe_max: max((x for x in lst if x is not None), default=None)
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

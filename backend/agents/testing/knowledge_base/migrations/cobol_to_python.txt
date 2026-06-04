@@ -1,0 +1,548 @@
+================================================================
+COBOL TO PYTHON CONVERSION - TEST CASE KNOWLEDGE BASE
+================================================================
+Reference for building Python test cases that validate code
+converted from COBOL. Covers fixed-format data structures, heavy
+business logic, and numeric precision (Decimal vs float). All
+examples use Python (pytest). The decimal module is central.
+================================================================
+
+CONTEXT FOR TEST CASE AGENT
+-----------------------------
+COBOL is used in banking, insurance, payroll, and government
+systems. Code converted from COBOL handles real money, legal
+records, and high-volume transactions. Correctness is CRITICAL —
+a rounding error on a financial calculation is a regulatory
+defect. Every numeric operation must use Decimal, not float.
+Fixed-width field parsing must be exact.
+
+
+----------------------------------------------------------------
+SECTION 1: FIXED-FORMAT DATA STRUCTURES
+----------------------------------------------------------------
+
+WHAT COBOL DOES
+---------------
+COBOL data is defined in fixed-width fields in the DATA DIVISION.
+Each field has an exact byte position, PIC clause (picture),
+and USAGE clause. Records are fixed-length — padding with spaces
+for strings and zeros for numbers.
+
+    * COBOL:
+    01 CUSTOMER-RECORD.
+       05 CUST-ID        PIC 9(6).         * 6-digit integer
+       05 CUST-NAME      PIC X(30).        * 30-char string, space-padded
+       05 CUST-BALANCE   PIC 9(10)V99.     * 10 digits + 2 decimal places
+       05 CUST-STATUS    PIC X(1).         * single character code
+
+    * Record is always: 6 + 30 + 12 + 1 = 49 characters wide
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python has no fixed-width data structures. Conversion typically
+uses: namedtuple, dataclass, struct module for binary, or string
+slicing for text records. The decimal.Decimal module handles
+COBOL's packed decimal (COMP-3) arithmetic correctly.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. Field widths not enforced — Python strings grow beyond spec
+2. Space-padding stripped but logic expected fixed width
+3. Leading zeros in numeric fields dropped or wrong
+4. COBOL V (implied decimal) position misinterpreted
+5. COMP-3 (packed decimal) numeric storage converted incorrectly
+6. COBOL REDEFINES clause — same memory, different interpretation
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+    from decimal import Decimal
+    import struct
+
+    # Test 1: fixed-width string field parsing — exact positions
+    RECORD_FORMAT = {
+        "cust_id":      (0,  6),    # chars 0..5 (6 chars)
+        "cust_name":    (6,  36),   # chars 6..35 (30 chars)
+        "cust_balance": (36, 49),   # chars 36..48 (13 chars: 10+2+decimal)
+        "cust_status":  (49, 50),   # char 49 (1 char)
+    }
+
+    def parse_cobol_record(line):
+        return {
+            field: line[start:end]
+            for field, (start, end) in RECORD_FORMAT.items()
+        }
+
+    def test_parse_fixed_record_correct_fields():
+        record = "000001ALICE SMITH                  000001234560A"
+        parsed = parse_cobol_record(record)
+        assert parsed["cust_id"] == "000001"
+        assert parsed["cust_name"] == "ALICE SMITH                   "[:30]
+        assert parsed["cust_status"] == "A"
+
+    # Test 2: numeric field with leading zeros
+    def test_numeric_field_leading_zeros():
+        raw = "000042"   # COBOL PIC 9(6) with value 42
+        value = int(raw)
+        assert value == 42
+        # Roundtrip — output must restore leading zeros
+        formatted = str(value).zfill(6)
+        assert formatted == "000042"
+
+    @pytest.mark.parametrize("raw, expected_int", [
+        ("000000", 0),
+        ("000001", 1),
+        ("000042", 42),
+        ("999999", 999999),
+    ])
+    def test_leading_zero_parsing(raw, expected_int):
+        assert int(raw) == expected_int
+
+    # Test 3: implied decimal (PIC 9(10)V99 → 10 digits + 2 decimal places)
+    def parse_cobol_decimal(raw, decimal_places=2):
+        # PIC 9(10)V99: raw "0000001234560" → Decimal("123456.00")
+        raw = raw.strip()
+        if len(raw) <= decimal_places:
+            integer_part = "0"
+            frac_part = raw.zfill(decimal_places)
+        else:
+            integer_part = raw[:-decimal_places]
+            frac_part = raw[-decimal_places:]
+        return Decimal(f"{integer_part}.{frac_part}")
+
+    @pytest.mark.parametrize("raw, decimal_places, expected", [
+        ("0000000001",    2, Decimal("0.01")),
+        ("0000000100",    2, Decimal("1.00")),
+        ("0000012345",    2, Decimal("123.45")),
+        ("9999999999",    2, Decimal("99999999.99")),
+        ("0000000000",    2, Decimal("0.00")),
+    ])
+    def test_implied_decimal_parsing(raw, decimal_places, expected):
+        result = parse_cobol_decimal(raw, decimal_places)
+        assert result == expected
+
+    # Test 4: space-padded string field
+    def test_string_field_space_padding():
+        name_field = "ALICE SMITH                   "  # 30 chars
+        assert len(name_field) == 30
+        stripped = name_field.strip()
+        assert stripped == "ALICE SMITH"
+
+    def test_string_field_right_pad():
+        name = "BOB"
+        padded = name.ljust(30)
+        assert len(padded) == 30
+        assert padded[:3] == "BOB"
+        assert padded[3:] == " " * 27
+
+    # Test 5: fixed-width output — must produce exactly correct width
+    def format_cobol_record(cust_id, name, balance, status):
+        id_str  = str(cust_id).zfill(6)[:6]
+        name_str = name.ljust(30)[:30]
+        # balance: Decimal → 13-char string (10 digits + decimal + 2 digits)
+        bal_str = str(balance).replace(".", "").zfill(13)[:13]
+        status_str = str(status)[:1]
+        return id_str + name_str + bal_str + status_str
+
+    def test_output_record_fixed_width():
+        record = format_cobol_record(1, "ALICE", Decimal("123.45"), "A")
+        assert len(record) == 50
+        assert record[:6] == "000001"
+        assert record[-1] == "A"
+
+    # Test 6: REDEFINES — same bytes, different interpretation
+    # COBOL: 01 DATE-FIELD PIC 9(8).      YYYYMMDD as number
+    #        01 DATE-REDEF REDEFINES DATE-FIELD.
+    #           05 YEAR  PIC 9(4).
+    #           05 MONTH PIC 9(2).
+    #           05 DAY   PIC 9(2).
+    def parse_date_field(raw_8chars):
+        """Parse COBOL 8-char YYYYMMDD date field."""
+        return {
+            "year":  int(raw_8chars[0:4]),
+            "month": int(raw_8chars[4:6]),
+            "day":   int(raw_8chars[6:8]),
+        }
+
+    def test_date_redefines_parsing():
+        raw = "20240315"
+        date = parse_date_field(raw)
+        assert date["year"] == 2024
+        assert date["month"] == 3
+        assert date["day"] == 15
+
+    @pytest.mark.parametrize("raw, y, m, d", [
+        ("19991231", 1999, 12, 31),
+        ("20000101", 2000, 1,  1),
+        ("20240229", 2024, 2,  29),   # leap day
+    ])
+    def test_date_parsing_parametrized(raw, y, m, d):
+        date = parse_date_field(raw)
+        assert date["year"] == y
+        assert date["month"] == m
+        assert date["day"] == d
+
+
+----------------------------------------------------------------
+SECTION 2: HEAVY BUSINESS LOGIC
+----------------------------------------------------------------
+
+WHAT COBOL DOES
+---------------
+COBOL business logic includes: conditional processing (IF, EVALUATE),
+table lookups (SEARCH), sequence processing (READ, WRITE), arithmetic
+(COMPUTE, ADD, SUBTRACT, MULTIPLY, DIVIDE), and PERFORM loops.
+Business rules are often encoded in long sequences of conditionals
+that must behave identically after conversion.
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+Python if/elif/else replaces COBOL IF/ELSE. Match statements (3.10+)
+can replace EVALUATE. For loops replace PERFORM loops. Dict lookups
+replace SEARCH on sorted tables. The challenge is that COBOL
+business rules are often implicit in field naming and level numbers.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. COBOL EVALUATE (switch) conditions may be mistranslated
+2. COBOL 88-level condition names (boolean aliases) may be lost
+3. Numeric comparison in COBOL is by value after decimal alignment —
+   Python Decimal handles this; float does not
+4. COBOL PERFORM UNTIL loops have AT END behavior for file reading
+5. Signed COBOL fields (S PIC) may lose sign tracking in conversion
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+    from decimal import Decimal
+
+    # Test 1: EVALUATE → if/elif — test all branches
+    # COBOL: EVALUATE CUST-STATUS
+    #        WHEN "A" → active
+    #        WHEN "I" → inactive
+    #        WHEN "S" → suspended
+    #        WHEN OTHER → unknown
+    def get_status_description(status):
+        if status == "A":
+            return "active"
+        elif status == "I":
+            return "inactive"
+        elif status == "S":
+            return "suspended"
+        else:
+            return "unknown"
+
+    @pytest.mark.parametrize("status, expected", [
+        ("A", "active"),
+        ("I", "inactive"),
+        ("S", "suspended"),
+        ("X", "unknown"),
+        ("",  "unknown"),
+        (" ", "unknown"),
+        (None,"unknown"),    # test defensive handling
+    ])
+    def test_status_all_branches(status, expected):
+        # Wrap for None safety:
+        result = get_status_description(status or "")
+        assert result == expected
+
+    # Test 2: 88-level condition name → Python bool property
+    # COBOL: 88 IS-ACTIVE VALUE "A".
+    #        IF IS-ACTIVE PERFORM PROCESS-ACTIVE-CUSTOMER
+    class CustomerStatus:
+        def __init__(self, code):
+            self.code = code
+
+        @property
+        def is_active(self):        # replaces COBOL 88-level IS-ACTIVE
+            return self.code == "A"
+
+        @property
+        def is_inactive(self):
+            return self.code == "I"
+
+    @pytest.mark.parametrize("code, active, inactive", [
+        ("A", True,  False),
+        ("I", False, True),
+        ("S", False, False),
+        ("X", False, False),
+    ])
+    def test_status_conditions(code, active, inactive):
+        s = CustomerStatus(code)
+        assert s.is_active == active
+        assert s.is_inactive == inactive
+
+    # Test 3: PERFORM loop equivalence
+    def apply_interest(accounts, rate):
+        # COBOL: PERFORM VARYING I FROM 1 BY 1 UNTIL I > N
+        #             COMPUTE BALANCE(I) = BALANCE(I) * (1 + RATE / 100)
+        result = []
+        for balance in accounts:
+            result.append(balance * (1 + rate / Decimal("100")))
+        return result
+
+    def test_interest_applied_to_all_accounts():
+        balances = [Decimal("1000.00"), Decimal("2000.00"), Decimal("500.00")]
+        rate = Decimal("5")
+        result = apply_interest(balances, rate)
+        assert result[0] == Decimal("1050.00")
+        assert result[1] == Decimal("2100.00")
+        assert result[2] == Decimal("525.00")
+
+    def test_interest_empty_accounts():
+        assert apply_interest([], Decimal("5")) == []
+
+    # Test 4: table lookup (COBOL SEARCH) → Python dict lookup
+    TAX_TABLE = {
+        "NY": Decimal("0.08875"),
+        "CA": Decimal("0.0725"),
+        "TX": Decimal("0.0625"),
+        "FL": Decimal("0.06"),
+    }
+
+    def get_tax_rate(state):
+        return TAX_TABLE.get(state, Decimal("0"))
+
+    @pytest.mark.parametrize("state, rate", [
+        ("NY", Decimal("0.08875")),
+        ("CA", Decimal("0.0725")),
+        ("TX", Decimal("0.0625")),
+        ("XX", Decimal("0")),     # not found
+        ("",   Decimal("0")),
+    ])
+    def test_tax_table_lookup(state, rate):
+        assert get_tax_rate(state) == rate
+
+    # Test 5: signed numeric field (PIC S9(5))
+    @pytest.mark.parametrize("raw, expected", [
+        ("+00100", Decimal("100")),
+        ("-00100", Decimal("-100")),
+        ("+00000", Decimal("0")),
+        ("-00000", Decimal("0")),
+    ])
+    def test_signed_field_parsing(raw, expected):
+        value = Decimal(raw)
+        assert value == expected
+
+
+----------------------------------------------------------------
+SECTION 3: NUMERIC PRECISION (DECIMAL VS FLOAT)
+----------------------------------------------------------------
+
+WHAT COBOL DOES
+---------------
+COBOL was designed for business — all arithmetic is decimal.
+COMP-3 (packed decimal) stores numbers as binary-coded decimal,
+preserving exact decimal arithmetic. Rounding modes are explicit
+(ROUNDED keyword). No floating-point errors in COBOL financial math.
+
+    * COBOL exact arithmetic:
+    COMPUTE TOTAL-AMOUNT = UNIT-PRICE * QUANTITY
+    COMPUTE TAX-AMOUNT ROUNDED = TOTAL-AMOUNT * TAX-RATE / 100
+    COMPUTE GRAND-TOTAL = TOTAL-AMOUNT + TAX-AMOUNT
+
+WHAT PYTHON DOES INSTEAD
+-------------------------
+CONVERTED CODE MUST USE decimal.Decimal — NEVER float for money.
+float arithmetic introduces rounding errors that compound across
+transactions. Even small errors (0.001 cents per transaction)
+become regulatory defects at scale.
+
+BUGS THIS INTRODUCES IN CONVERTED CODE
+----------------------------------------
+1. Using float instead of Decimal — the most critical conversion bug
+2. Using wrong rounding mode — COBOL ROUNDED often rounds half-up
+3. Losing Decimal precision by mixing Decimal and float
+4. Losing leading/trailing zeros that affect display
+5. Decimal division giving too many places — must QUANTIZE result
+6. Incorrect handling of negative values in financial calculations
+
+WHAT TO TEST IN CONVERTED PYTHON CODE
+---------------------------------------
+    import pytest
+    from decimal import Decimal, ROUND_HALF_UP, ROUND_HALF_EVEN, getcontext
+
+    # CRITICAL: set Decimal precision high enough for all operations
+    getcontext().prec = 28
+
+    # Test 1: NEVER use float for money
+    def test_float_is_imprecise_for_money():
+        price = 19.99
+        qty = 3
+        total_float = price * qty
+        assert total_float != 59.97    # float: 59.97000000000000... or similar
+        assert abs(total_float - 59.97) > 0   # imprecise
+
+    def test_decimal_is_exact_for_money():
+        price = Decimal("19.99")
+        qty = 3
+        total = price * qty
+        assert total == Decimal("59.97")   # exact
+
+    # Test 2: COBOL ROUNDED → Python ROUND_HALF_UP
+    # COBOL ROUNDED uses half-up (traditional rounding)
+    def cobol_round(value, places=2):
+        quantize_str = Decimal("0." + "0" * places) if places > 0 else Decimal("1")
+        return value.quantize(quantize_str, rounding=ROUND_HALF_UP)
+
+    @pytest.mark.parametrize("raw, places, expected", [
+        ("1.005",  2, Decimal("1.01")),
+        ("1.004",  2, Decimal("1.00")),
+        ("2.995",  2, Decimal("3.00")),
+        ("0.005",  2, Decimal("0.01")),
+        ("0.004",  2, Decimal("0.00")),
+        ("-1.005", 2, Decimal("-1.01")),    # negative — rounds away from zero
+        ("123.456", 2, Decimal("123.46")),
+        ("0.000",  2, Decimal("0.00")),
+    ])
+    def test_cobol_rounded_arithmetic(raw, places, expected):
+        result = cobol_round(Decimal(raw), places)
+        assert result == expected
+
+    # Test 3: tax calculation must be exact
+    def calculate_tax(amount, rate):
+        """amount: Decimal, rate: Decimal percent e.g. Decimal('8.875')"""
+        tax = (amount * rate / Decimal("100"))
+        return cobol_round(tax, 2)
+
+    @pytest.mark.parametrize("amount, rate, expected_tax", [
+        (Decimal("100.00"),  Decimal("8.875"),  Decimal("8.88")),
+        (Decimal("1.00"),    Decimal("8.875"),  Decimal("0.09")),
+        (Decimal("0.10"),    Decimal("8.875"),  Decimal("0.01")),
+        (Decimal("10.00"),   Decimal("0"),      Decimal("0.00")),
+        (Decimal("999.99"),  Decimal("8.875"),  Decimal("88.75")),
+    ])
+    def test_tax_calculation_exact(amount, rate, expected_tax):
+        assert calculate_tax(amount, rate) == expected_tax
+
+    # Test 4: interest calculation — compound amounts
+    def apply_monthly_interest(balance, annual_rate_pct):
+        monthly_rate = annual_rate_pct / Decimal("1200")  # annual % / 12 months / 100
+        interest = cobol_round(balance * monthly_rate, 2)
+        return balance + interest
+
+    @pytest.mark.parametrize("balance, rate, expected", [
+        (Decimal("1000.00"), Decimal("12"),   Decimal("1010.00")),  # 1% monthly
+        (Decimal("1000.00"), Decimal("6"),    Decimal("1005.00")),  # 0.5% monthly
+        (Decimal("0.00"),    Decimal("12"),   Decimal("0.00")),
+        (Decimal("100.00"),  Decimal("0"),    Decimal("100.00")),
+    ])
+    def test_monthly_interest(balance, rate, expected):
+        assert apply_monthly_interest(balance, rate) == expected
+
+    # Test 5: never mix Decimal and float
+    def test_mixing_decimal_and_float_raises():
+        with pytest.raises(TypeError):
+            _ = Decimal("10.00") + 3.5    # TypeError: cannot mix
+
+    def test_decimal_from_string_not_float():
+        # CRITICAL: Decimal(0.1) is imprecise — float already has error
+        imprecise = Decimal(0.1)   # Decimal of float
+        precise   = Decimal("0.1") # Decimal of string
+
+        assert imprecise != precise
+        assert precise == Decimal("0.1")
+
+    # Test 6: COBOL COMPUTE — multi-step arithmetic
+    def compute_invoice_total(unit_price, quantity, discount_pct, tax_rate_pct):
+        subtotal  = cobol_round(unit_price * quantity, 2)
+        discount  = cobol_round(subtotal * discount_pct / Decimal("100"), 2)
+        after_disc = subtotal - discount
+        tax       = cobol_round(after_disc * tax_rate_pct / Decimal("100"), 2)
+        total     = after_disc + tax
+        return total
+
+    @pytest.mark.parametrize("price, qty, disc, tax, expected", [
+        (Decimal("10.00"), 5,  Decimal("10"),  Decimal("8"),    Decimal("48.60")),
+        (Decimal("99.99"), 1,  Decimal("0"),   Decimal("0"),    Decimal("99.99")),
+        (Decimal("1.00"),  100,Decimal("0"),   Decimal("10"),   Decimal("110.00")),
+        (Decimal("0.01"),  1,  Decimal("0"),   Decimal("0"),    Decimal("0.01")),
+    ])
+    def test_invoice_computation(price, qty, disc, tax, expected):
+        result = compute_invoice_total(price, qty, disc, tax)
+        assert result == expected
+
+    # Test 7: display format — COBOL PIC output
+    def format_currency(amount):
+        """Format Decimal as COBOL PIC $9(10).99 display."""
+        return f"${amount:,.2f}"
+
+    @pytest.mark.parametrize("amount, expected", [
+        (Decimal("1234.56"),    "$1,234.56"),
+        (Decimal("0.01"),       "$0.01"),
+        (Decimal("0.00"),       "$0.00"),
+        (Decimal("1000000.00"), "$1,000,000.00"),
+    ])
+    def test_currency_display_format(amount, expected):
+        assert format_currency(amount) == expected
+
+    # Test 8: accumulator pattern — batch totals
+    def test_batch_total_exact():
+        transactions = [
+            Decimal("100.01"),
+            Decimal("200.02"),
+            Decimal("300.03"),
+            Decimal("  -50.00".strip()),
+        ]
+        total = sum(transactions)
+        assert total == Decimal("550.06")
+        assert isinstance(total, Decimal)
+
+    # Test 9: zero balance edge cases
+    @pytest.mark.parametrize("balance", [
+        Decimal("0"),
+        Decimal("0.00"),
+        Decimal("0.000"),
+        Decimal("-0.00"),
+    ])
+    def test_zero_balance_variants(balance):
+        assert balance == Decimal("0")
+        assert balance >= Decimal("0")
+
+    # Test 10: negative balance (credit)
+    def test_negative_balance():
+        balance = Decimal("-1500.00")
+        assert balance < Decimal("0")
+        assert abs(balance) == Decimal("1500.00")
+        formatted = f"${abs(balance):,.2f} CR"
+        assert formatted == "$1,500.00 CR"
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+FIXED-FORMAT DATA
+    field positions: use exact slice [start:end] — never split/strip first
+    numeric fields:  int(raw.strip()) — then zfill() to restore
+    implied decimal: split raw at -N chars for decimal places
+    space padding:   str.ljust(width) for output, str.strip() for input
+    output records:  zfill(N) for numbers, ljust(N) for strings
+    always test len(output_field) == expected_width
+    date fields:     YYYYMMDD → parse with raw[0:4], raw[4:6], raw[6:8]
+    signed fields:   handle + and - prefix explicitly
+
+BUSINESS LOGIC
+    EVALUATE → if/elif/else — test ALL branches including WHEN OTHER
+    88-level names → Python @property returning bool
+    PERFORM VARYING → for loop with correct range
+    SEARCH table → dict.get() with default value
+    AT END → exhausted iterator or empty result
+    test boundary conditions for all business rules
+    test "none of the above" / default branch always
+
+DECIMAL PRECISION
+    CRITICAL: NEVER use float for money — always decimal.Decimal
+    Always initialize from string: Decimal("0.01") not Decimal(0.01)
+    COBOL ROUNDED → ROUND_HALF_UP (not Python default banker's rounding)
+    QUANTIZE to control output decimal places: .quantize(Decimal("0.01"))
+    Mixing Decimal + float → TypeError — test that conversions are clean
+    multi-step COMPUTE: round after EACH step, not just at end
+    batch totals: sum(Decimal list) → Decimal — test exact value
+    zero: Decimal("0") == Decimal("0.00") == Decimal("0.000") — True
+    negative: test credit amounts, refunds, adjustments
+    getcontext().prec = 28 for high-precision intermediate results
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

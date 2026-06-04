@@ -1,0 +1,612 @@
+================================================================
+EDGE CASES - KNOWLEDGE BASE
+================================================================
+A comprehensive reference for identifying and handling edge cases
+in software testing and development. Covers general patterns,
+boundary conditions, nulls, empty values, and more.
+Intended for use as a RAG source.
+================================================================
+
+
+----------------------------------------------------------------
+SECTION 1: GENERAL EDGE CASES
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+An edge case is an input or condition at the extreme end of
+operating parameters. Edge cases are distinct from normal cases
+(typical usage) and corner cases (multiple edge conditions
+occurring simultaneously). They are a leading source of bugs
+because developers test happy paths but forget extremes.
+
+CATEGORIES OF EDGE CASES
+--------------------------
+1. Boundary values       (min, max, one-off errors)
+2. Null / None / missing (absent data)
+3. Empty collections     ([], {}, "", set())
+4. Type mismatches       (wrong type passed)
+5. Special numeric values (0, -1, infinity, NaN)
+6. String edge cases     (whitespace, unicode, very long strings)
+7. Date and time         (leap years, timezones, epoch)
+8. Concurrency           (race conditions, shared state)
+9. Encoding              (UTF-8, special characters, BOM)
+10. Ordering             (unsorted, duplicates, single element)
+
+WHY EDGE CASES CAUSE BUGS
+--------------------------
+- Off-by-one errors in loops and index access
+- Assumptions about data being non-null
+- Integer overflow when values exceed expected range
+- Division by zero when denominators are not validated
+- Index out of bounds on empty or single-element collections
+- Silent truncation of strings or numbers
+- Locale-dependent behavior (sorting, decimal separators)
+
+EDGE CASE DISCOVERY STRATEGIES
+--------------------------------
+- Equivalence partitioning: divide input space into classes,
+  test one value from each class including boundary classes
+- Boundary value analysis: test at min, max, min-1, max+1
+- Error guessing: use experience to anticipate likely failures
+- Mutation testing: change code slightly to see if tests catch it
+- Fuzzing: generate random/malformed inputs programmatically
+- Code review: look for assumptions in conditionals and loops
+
+
+----------------------------------------------------------------
+SECTION 2: BOUNDARY CASES
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Boundary cases occur at the edges of valid input ranges. The most
+common source of boundary bugs is the off-by-one error. Always
+test: at the boundary, just inside, and just outside.
+
+NUMERIC BOUNDARIES
+------------------
+For a function accepting age in range [0, 120]:
+
+    Boundary values to test:
+        -1      → below minimum (invalid)
+         0      → minimum (valid)
+         1      → just above minimum (valid)
+        60      → midpoint (valid)
+        119     → just below maximum (valid)
+        120     → maximum (valid)
+        121     → above maximum (invalid)
+
+    def test_age_boundaries():
+        assert is_valid_age(0)    is True
+        assert is_valid_age(120)  is True
+        assert is_valid_age(-1)   is False
+        assert is_valid_age(121)  is False
+
+INTEGER TYPE LIMITS
+-------------------
+In Python, integers are arbitrary precision — no overflow.
+In other languages or when using fixed-size types (numpy, C ext):
+
+    import numpy as np
+
+    INT8_MAX  =  127
+    INT8_MIN  = -128
+    INT16_MAX =  32767
+    INT32_MAX =  2147483647
+    INT64_MAX =  9223372036854775807
+
+    # Test at and around these limits
+    assert np.int8(127) == 127
+    # np.int8(128) wraps to -128 — silent overflow
+
+    # Python built-in int never overflows:
+    assert 2**63 + 1 > 0   # always True in Python
+
+FLOAT BOUNDARIES
+----------------
+    import math
+    import sys
+
+    sys.float_info.max   # 1.7976931348623157e+308
+    sys.float_info.min   # 2.2250738585072014e-308 (smallest positive normal)
+    math.inf             # positive infinity
+    -math.inf            # negative infinity
+    math.nan             # not a number
+
+    # Test with special float values:
+    def safe_divide(a, b):
+        if b == 0:
+            return None
+        return a / b
+
+    assert safe_divide(1.0, 0.0) is None
+    assert safe_divide(math.inf, 2) == math.inf
+    assert math.isnan(math.nan)
+
+    # Float precision boundary:
+    # Never use == for floats near boundaries
+    from pytest import approx
+    assert 0.1 + 0.2 == approx(0.3)
+
+STRING LENGTH BOUNDARIES
+-------------------------
+    MAX_USERNAME_LEN = 20
+
+    def test_username_length_boundaries():
+        assert is_valid_username("a" * 1)   is True   # min
+        assert is_valid_username("a" * 20)  is True   # max
+        assert is_valid_username("a" * 21)  is False  # over max
+        assert is_valid_username("")         is False  # empty
+
+COLLECTION SIZE BOUNDARIES
+---------------------------
+    # Empty collection (size 0)
+    # Single element (size 1) — often breaks loop logic
+    # Two elements — minimum for comparison operations
+    # Large collections — performance and memory
+
+    def test_sort_boundaries():
+        assert sort_items([]) == []           # empty
+        assert sort_items([5]) == [5]         # single element
+        assert sort_items([2, 1]) == [1, 2]   # two elements
+        assert sort_items([1]) == [1]         # already sorted
+
+INDEX AND SLICE BOUNDARIES
+---------------------------
+    items = [10, 20, 30]
+
+    # Valid indices: 0, 1, 2, -1, -2, -3
+    assert items[0]  == 10   # first
+    assert items[-1] == 30   # last
+    assert items[2]  == 30   # last (positive index)
+
+    # Out of bounds raises IndexError:
+    with pytest.raises(IndexError):
+        _ = items[3]
+
+    with pytest.raises(IndexError):
+        _ = items[-4]
+
+    # Slices never raise — they return empty or partial:
+    assert items[10:20] == []
+    assert items[-100:] == [10, 20, 30]
+
+LOOP BOUNDARY CASES
+-------------------
+    # Off-by-one is the most common loop bug.
+    # Test: zero iterations, one iteration, n iterations.
+
+    def sum_up_to(n):
+        total = 0
+        for i in range(1, n + 1):
+            total += i
+        return total
+
+    assert sum_up_to(0) == 0   # zero iterations
+    assert sum_up_to(1) == 1   # one iteration
+    assert sum_up_to(5) == 15  # normal case
+
+PAGINATION BOUNDARIES
+---------------------
+    # Page 1 (first page), last page, beyond last page, page 0 or negative
+
+    def test_pagination():
+        assert get_page(1)   is not None      # first page
+        assert get_page(0)   raises ValueError # invalid
+        assert get_page(-1)  raises ValueError # invalid
+        assert get_page(999) == []             # beyond data
+
+DATE AND TIME BOUNDARIES
+-------------------------
+    import datetime
+
+    # Common boundary dates to test:
+    dates_to_test = [
+        datetime.date(2000, 1, 1),    # Y2K / millennium
+        datetime.date(1970, 1, 1),    # Unix epoch
+        datetime.date(2038, 1, 19),   # Unix 32-bit overflow (Y2K38)
+        datetime.date(2000, 2, 29),   # leap day
+        datetime.date(1900, 2, 28),   # 1900 NOT a leap year
+        datetime.date(2000, 12, 31),  # year end
+        datetime.date(2001, 1, 1),    # year start
+    ]
+
+    # Leap year rules:
+    # Divisible by 4   → leap year
+    # Divisible by 100 → NOT a leap year
+    # Divisible by 400 → IS a leap year
+
+    import calendar
+    assert calendar.isleap(2000) is True   # divisible by 400
+    assert calendar.isleap(1900) is False  # divisible by 100, not 400
+    assert calendar.isleap(2024) is True   # divisible by 4
+    assert calendar.isleap(2023) is False  # not divisible by 4
+
+    # Month boundary — last day of month:
+    # January=31, February=28/29, April=30, etc.
+
+    # Timezone boundaries:
+    # DST transitions cause clocks to jump or repeat an hour.
+    # Use UTC internally; convert for display only.
+
+RANGE AND INTERVAL BOUNDARIES
+------------------------------
+    # Inclusive vs exclusive endpoints are a common source of bugs.
+
+    # [0, 10]  → 0 and 10 are valid
+    # (0, 10)  → 0 and 10 are invalid
+    # [0, 10)  → 0 is valid, 10 is invalid (common in programming)
+
+    def in_range_inclusive(x, lo, hi):
+        return lo <= x <= hi
+
+    def in_range_exclusive(x, lo, hi):
+        return lo < x < hi
+
+    assert in_range_inclusive(0, 0, 10)  is True
+    assert in_range_inclusive(10, 0, 10) is True
+    assert in_range_exclusive(0, 0, 10)  is False
+    assert in_range_exclusive(10, 0, 10) is False
+
+
+----------------------------------------------------------------
+SECTION 3: NULLS, EMPTY VALUES, AND MISSING DATA
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Null/None/missing values are among the most frequent causes of
+runtime errors. Always define and test behavior for absent data.
+
+NONE IN PYTHON
+--------------
+    # None is Python's null. It is a singleton.
+    assert x is None       # correct identity check
+    assert x is not None   # correct
+    # Never: assert x == None  (works but is poor style)
+
+    # Functions return None implicitly if no return statement.
+    def no_return():
+        pass
+
+    assert no_return() is None
+
+    # None in collections:
+    items = [1, None, 3]
+    assert None in items
+    assert items.count(None) == 1
+
+    # None in dict:
+    d = {"key": None}
+    assert d["key"] is None
+    assert d.get("missing") is None   # get() returns None for missing keys
+
+NONE VS MISSING KEY
+--------------------
+    d = {"a": None}
+
+    # "a" exists but its value is None:
+    assert "a" in d
+    assert d.get("a") is None
+
+    # "b" does not exist at all:
+    assert "b" not in d
+    assert d.get("b") is None   # same result as above — be careful
+
+    # Use a sentinel to distinguish:
+    MISSING = object()
+    assert d.get("a", MISSING) is None    # key exists, value is None
+    assert d.get("b", MISSING) is MISSING # key is truly absent
+
+EMPTY STRINGS
+-------------
+    # Falsy strings: "", only-whitespace strings after strip()
+    s = ""
+    assert not s            # empty string is falsy
+    assert len(s) == 0
+    assert s == ""
+
+    # Whitespace-only:
+    ws = "   "
+    assert ws              # non-empty, truthy!
+    assert ws.strip() == ""
+    assert not ws.strip()
+
+    # None vs empty string — different things:
+    assert None != ""
+    assert (None or "") == ""   # common default pattern
+
+    # Test both:
+    def test_name_validation():
+        assert is_valid_name(None)  is False
+        assert is_valid_name("")    is False
+        assert is_valid_name("   ") is False   # whitespace only
+        assert is_valid_name("Alice") is True
+
+EMPTY COLLECTIONS
+-----------------
+    # All empty collections are falsy:
+    assert not []
+    assert not {}
+    assert not set()
+    assert not ()
+    assert not ""
+
+    # But be explicit in tests:
+    assert result == []         # preferred over: assert not result
+    assert len(result) == 0
+
+    # Common mistake — mutating default mutable argument:
+    def append_item(item, lst=[]):   # BUG: lst is shared across calls
+        lst.append(item)
+        return lst
+
+    # Correct:
+    def append_item(item, lst=None):
+        if lst is None:
+            lst = []
+        lst.append(item)
+        return lst
+
+    # Tests:
+    def test_empty_list_operations():
+        assert sum([]) == 0
+        assert max([])    # raises ValueError — test this!
+        assert list(reversed([])) == []
+        assert sorted([]) == []
+
+    def test_empty_dict_operations():
+        d = {}
+        assert d.get("key") is None
+        assert d.get("key", "default") == "default"
+        assert list(d.keys()) == []
+        assert list(d.values()) == []
+        assert list(d.items()) == []
+
+    def test_empty_set_operations():
+        s = set()
+        assert len(s) == 0
+        assert not s
+        assert s | {1} == {1}
+        assert s & {1} == set()
+
+SINGLE-ELEMENT COLLECTIONS
+---------------------------
+Single-element collections break code that assumes multiple elements:
+
+    # Single element — no pair to compare, no middle element, etc.
+    items = [42]
+
+    assert items[0] == 42
+    assert items[-1] == 42    # same element
+    assert len(items) == 1
+
+    # Operations that behave differently:
+    assert max(items) == 42
+    assert min(items) == 42
+    assert sorted(items) == [42]
+    assert sum(items) == 42
+
+    # Slicing:
+    assert items[1:] == []   # empty tail
+    assert items[:0] == []   # empty head
+
+NONE PROPAGATION PATTERNS
+--------------------------
+    # Guard early:
+    def get_username(user):
+        if user is None:
+            return None
+        return user.name
+
+    # Use or-default:
+    name = user.name if user else "Anonymous"
+
+    # Optional chaining equivalent (Python 3.8+ walrus):
+    if (name := user.name if user else None) is not None:
+        process(name)
+
+    # Return None consistently, not sometimes None/sometimes value:
+    def find_user(user_id):
+        if user_id <= 0:
+            return None       # always None, not -1 or False
+        return db.get(user_id)
+
+MISSING / OPTIONAL FIELDS IN DATA STRUCTURES
+--------------------------------------------
+    # dict.get() for optional keys:
+    config = {"host": "localhost"}
+    port = config.get("port", 8080)   # default if missing
+
+    # dataclasses with Optional:
+    from dataclasses import dataclass, field
+    from typing import Optional, List
+
+    @dataclass
+    class User:
+        name: str
+        email: Optional[str] = None
+        tags: List[str] = field(default_factory=list)
+
+    u = User(name="Alice")
+    assert u.email is None
+    assert u.tags == []
+
+    # Test missing fields explicitly:
+    def test_optional_email():
+        u = User(name="Bob")
+        assert u.email is None
+
+        u2 = User(name="Carol", email="carol@example.com")
+        assert u2.email == "carol@example.com"
+
+NAN (NOT A NUMBER)
+------------------
+    import math
+
+    # NaN is not equal to anything, including itself:
+    assert math.nan != math.nan   # True!
+    assert not (math.nan == math.nan)
+
+    # Check with math.isnan or numpy:
+    assert math.isnan(math.nan)
+    assert math.isnan(float("nan"))
+
+    # NaN propagates through arithmetic:
+    assert math.isnan(math.nan + 1)
+    assert math.isnan(math.nan * 0)
+
+    # In pandas, NaN is used for missing data:
+    import pandas as pd
+    s = pd.Series([1.0, float("nan"), 3.0])
+    assert s.isna().sum() == 1
+
+ZERO AS AN EDGE CASE
+---------------------
+    # Zero is falsy in Python:
+    assert not 0
+    assert not 0.0
+
+    # This causes bugs when 0 is a valid value:
+    count = 0
+    if count:                    # BUG: skips when count is 0
+        process(count)
+
+    if count is not None:        # correct: 0 is valid
+        process(count)
+
+    # Division by zero:
+    def safe_divide(a, b):
+        if b == 0:
+            raise ValueError("Cannot divide by zero")
+        return a / b
+
+    # Modulo by zero:
+    with pytest.raises(ZeroDivisionError):
+        _ = 5 % 0
+
+    # Zero in pow:
+    assert 0 ** 0 == 1    # Python returns 1 (math is undefined)
+    assert 0 ** 1 == 0
+    assert 1 ** 0 == 1
+
+UNICODE AND ENCODING EDGE CASES
+--------------------------------
+    # Non-ASCII characters:
+    s = "café"
+    assert len(s) == 4          # 4 characters
+    assert len(s.encode()) == 5 # 5 bytes in UTF-8 (é = 2 bytes)
+
+    # Emoji:
+    e = "hello 🌍"
+    assert len(e) == 8          # 7 chars + 1 emoji code point
+
+    # Normalization — same visual character, different bytes:
+    import unicodedata
+    a = "\u00e9"           # é as single code point
+    b = "e\u0301"          # é as e + combining accent
+    assert a != b          # different byte sequences
+    assert unicodedata.normalize("NFC", a) == unicodedata.normalize("NFC", b)
+
+    # Null byte in string:
+    s = "hello\x00world"
+    assert len(s) == 11
+    assert "\x00" in s
+
+    # BOM (byte order mark) at start of file:
+    bom = "\ufeff"
+    line = "\ufeffFirst line"
+    clean = line.lstrip("\ufeff")
+    assert clean == "First line"
+
+WHITESPACE EDGE CASES
+---------------------
+    # Leading/trailing whitespace:
+    assert "  hello  ".strip() == "hello"
+    assert "  hello  ".lstrip() == "hello  "
+    assert "  hello  ".rstrip() == "  hello"
+
+    # Tabs and newlines:
+    s = "hello\tworld\n"
+    assert s.strip() == "hello\tworld"
+
+    # Multiple internal spaces:
+    s = "hello   world"
+    assert " ".join(s.split()) == "hello world"
+
+    # Only whitespace:
+    assert "   ".strip() == ""
+    assert not "   ".strip()
+
+NEGATIVE NUMBERS
+----------------
+    # Negative numbers are often forgotten in boundary analysis.
+    assert abs(-5) == 5
+    assert -5 % 3 == 1        # Python modulo always non-negative
+    assert -5 // 3 == -2      # floor division rounds toward -inf
+
+    def test_negative_index():
+        lst = [1, 2, 3]
+        assert lst[-1] == 3   # last element
+        assert lst[-3] == 1   # first element
+        with pytest.raises(IndexError):
+            _ = lst[-4]
+
+LARGE VALUES
+------------
+    # Large strings:
+    big_string = "a" * 10_000_000
+    assert len(big_string) == 10_000_000
+
+    # Large lists — check performance and memory:
+    big_list = list(range(1_000_000))
+    assert len(big_list) == 1_000_000
+    assert big_list[0] == 0
+    assert big_list[-1] == 999_999
+
+    # Large integers in Python are fine:
+    factorial_100 = 1
+    for i in range(1, 101):
+        factorial_100 *= i
+    assert factorial_100 > 0   # no overflow
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+BOUNDARY ANALYSIS
+    test at: min, min-1, min+1, max-1, max, max+1
+    off-by-one: check loop ranges with 0, 1, n iterations
+    dates: leap years, month ends, epoch, Y2K, Y2K38
+    floats: use approx(), never ==; test inf, -inf, nan
+
+NULLS / NONE
+    identity check:     x is None / x is not None
+    dict missing key:   d.get("k", default)
+    sentinel pattern:   MISSING = object()
+    none vs empty str:  None != ""
+    NaN check:          math.isnan(x) — NaN != NaN
+
+EMPTY VALUES
+    empty list:     []    falsy, len==0, sorted==[], sum==0
+    empty dict:     {}    falsy, .get() returns None
+    empty string:   ""    falsy, len==0
+    empty set:      set() falsy
+
+SPECIAL NUMBERS
+    zero:           falsy — use "is not None" not truthiness
+    negative:       test negative inputs explicitly
+    0 ** 0:         Python returns 1
+    division by 0:  ZeroDivisionError, check before dividing
+
+STRINGS
+    whitespace only:    strip() == ""
+    unicode:            NFC normalize before comparing
+    BOM:                lstrip("\ufeff")
+    length vs bytes:    len(s) != len(s.encode()) for non-ASCII
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================

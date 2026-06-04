@@ -1,0 +1,786 @@
+================================================================
+STRING EDGE CASES - KNOWLEDGE BASE
+================================================================
+A focused reference for string edge cases in Python testing.
+Covers empty strings, whitespace, unicode, special symbols,
+and long strings. Designed for RAG-based test case generation
+agents. All examples are in Python (pytest).
+================================================================
+
+
+----------------------------------------------------------------
+SECTION 1: EMPTY STRING
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+The empty string "" is one of the most commonly forgotten edge
+cases. It is falsy, has length zero, is a valid string object,
+and behaves differently from None. Functions that accept strings
+must explicitly decide what to do with "".
+
+EMPTY STRING BASICS
+--------------------
+    s = ""
+    assert s == ""
+    assert len(s) == 0
+    assert not s                    # falsy
+    assert isinstance(s, str)       # it IS a string
+    assert s is not None            # it is NOT None
+
+    # Falsy check bug — empty string skipped silently:
+    name = ""
+    if name:                        # BUG: skips empty string
+        greet(name)
+
+    # Correct — explicit check:
+    if name is not None:
+        greet(name)                 # handles ""
+
+    # Or check for non-empty explicitly:
+    if name:                        # valid if "" should be rejected
+        process(name)
+
+EMPTY STRING OPERATIONS
+------------------------
+    s = ""
+    assert s.upper() == ""
+    assert s.lower() == ""
+    assert s.strip() == ""
+    assert s.split() == []              # empty list, not [""]
+    assert s.split(",") == [""]         # [""] — one empty element
+    assert ",".join([]) == ""
+    assert "".join(["a", "b"]) == "ab"
+    assert s.startswith("") is True     # everything starts with ""
+    assert s.endswith("") is True
+    assert "" in s                      # empty string in empty string
+    assert "" in "hello"                # empty string in any string
+    assert s.replace("a", "b") == ""
+    assert s.encode() == b""
+    assert list(s) == []                # iterating gives nothing
+
+EMPTY STRING VS NONE
+---------------------
+    # None and "" are different — test both:
+    assert None != ""
+    assert (None or "default") == "default"
+    assert ("" or "default") == "default"   # "" is falsy too!
+
+    # None-coalescing pattern distinguishes them:
+    def normalize(s):
+        if s is None:
+            return None
+        return s.strip()
+
+    assert normalize(None) == None
+    assert normalize("") == ""
+    assert normalize("  ") == ""
+    assert normalize("hello") == "hello"
+
+EMPTY STRING IN SPLIT / JOIN
+------------------------------
+    # str.split() with no args vs with separator:
+    assert "".split() == []           # split() with no args: []
+    assert "".split(",") == [""]      # split(",") with sep: [""]
+
+    # Joining empty list vs list with empty string:
+    assert ",".join([]) == ""         # no elements → empty string
+    assert ",".join([""]) == ""       # one empty element → empty string
+    assert ",".join(["", ""]) == ","  # two empty elements → comma
+
+PYTEST TEST CASES FOR EMPTY STRING
+------------------------------------
+    import pytest
+
+    @pytest.mark.parametrize("value, is_valid", [
+        ("hello",   True),
+        ("",        False),
+        (None,      False),
+    ])
+    def test_non_empty_validation(value, is_valid):
+        assert validate_non_empty(value) == is_valid
+
+    def test_empty_string_as_key():
+        d = {"": "empty key value"}
+        assert d[""] == "empty key value"
+
+    def test_empty_string_in_list():
+        items = ["a", "", "b", ""]
+        non_empty = [x for x in items if x]
+        assert non_empty == ["a", "b"]
+
+
+----------------------------------------------------------------
+SECTION 2: WHITESPACE
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Whitespace strings are non-empty (truthy) but contain no visible
+content. They cause subtle bugs when code checks truthiness rather
+than stripped content. Test with spaces, tabs, newlines, and
+mixed whitespace.
+
+WHITESPACE IS TRUTHY
+---------------------
+    assert "   "        # truthy — non-empty!
+    assert "\t"         # truthy
+    assert "\n"         # truthy
+    assert "\r\n"       # truthy
+    assert "   ".strip() == ""       # but stripped content is empty
+    assert not "   ".strip()         # stripped is falsy
+
+WHITESPACE VARIANTS TO TEST
+-----------------------------
+    SPACE     = " "       # U+0020 regular space
+    TAB       = "\t"      # U+0009 horizontal tab
+    NEWLINE   = "\n"      # U+000A line feed
+    CR        = "\r"      # U+000D carriage return
+    CRLF      = "\r\n"    # Windows line ending
+    NBSP      = "\u00a0"  # U+00A0 non-breaking space (NOT stripped by strip())
+    ZWSP      = "\u200b"  # U+200B zero-width space
+    EM_SPACE  = "\u2003"  # U+2003 em space
+    IDEOGRAPH = "\u3000"  # U+3000 ideographic space
+
+    # Python strip() only strips ASCII whitespace by default:
+    assert "\u00a0".strip() == "\u00a0"   # NBSP is NOT stripped!
+    assert " ".strip() == ""              # regular space IS stripped
+
+    # To strip unicode whitespace:
+    import re
+    def unicode_strip(s):
+        return re.sub(r"^\s+|\s+$", "", s, flags=re.UNICODE)
+
+STRIP / LSTRIP / RSTRIP
+-------------------------
+    assert "  hello  ".strip()  == "hello"
+    assert "  hello  ".lstrip() == "hello  "
+    assert "  hello  ".rstrip() == "  hello"
+    assert "\t\nhello\n".strip() == "hello"
+    assert "xxhelloxx".strip("x") == "hello"   # strip specific chars
+
+INTERNAL WHITESPACE
+--------------------
+    # Multiple spaces inside the string:
+    s = "hello   world"
+    assert s.strip() == "hello   world"    # strip doesn't fix internal
+    assert " ".join(s.split()) == "hello world"   # normalize internal
+
+    # Split behavior with whitespace:
+    assert "a  b  c".split() == ["a", "b", "c"]     # any whitespace, strips
+    assert "a  b  c".split(" ") == ["a", "", "b", "", "c"]  # exact split
+
+WHITESPACE IN VALIDATION
+-------------------------
+    def is_blank(s):
+        return s is None or s.strip() == ""
+
+    assert is_blank(None)     is True
+    assert is_blank("")       is True
+    assert is_blank("   ")    is True
+    assert is_blank("\t\n")   is True
+    assert is_blank("a")      is False
+    assert is_blank("  a  ")  is False
+
+WHITESPACE IN FILE INPUT
+-------------------------
+    # Lines read from files include trailing newline:
+    line = "hello\n"
+    assert line.rstrip("\n") == "hello"
+    assert line.rstrip() == "hello"     # strips all trailing whitespace
+
+    # CSV or TSV rows may have trailing whitespace:
+    row = "Alice , 30 , admin "
+    fields = [f.strip() for f in row.split(",")]
+    assert fields == ["Alice", "30", "admin"]
+
+PYTEST TEST CASES FOR WHITESPACE
+----------------------------------
+    import pytest
+
+    @pytest.mark.parametrize("value", [
+        " ",
+        "  ",
+        "\t",
+        "\n",
+        "\r\n",
+        " \t\n ",
+    ])
+    def test_whitespace_only_is_invalid(value):
+        assert is_valid_username(value) is False
+
+    @pytest.mark.parametrize("raw, expected", [
+        ("  Alice  ",   "Alice"),
+        ("\tBob\n",     "Bob"),
+        ("  Carol  ",   "Carol"),
+        ("Dave",        "Dave"),
+        ("",            ""),
+    ])
+    def test_strip_name(raw, expected):
+        assert raw.strip() == expected
+
+    def test_internal_whitespace_preserved():
+        s = "hello world"
+        assert s.strip() == "hello world"   # internal space stays
+
+
+----------------------------------------------------------------
+SECTION 3: UNICODE CHARACTERS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Python 3 strings are unicode (UTF-8) by default. Unicode edge cases
+include multibyte characters, combining characters, bidirectional
+text, normalization, and surrogate pairs. Tests must cover non-ASCII
+to be robust.
+
+BASIC UNICODE
+--------------
+    # Accented characters:
+    s = "café"
+    assert len(s) == 4           # 4 code points
+
+    # Byte length differs from character length:
+    assert len(s.encode("utf-8")) == 5     # é is 2 bytes in UTF-8
+    assert len(s.encode("utf-16")) == 10   # 2 bytes per char + BOM
+
+    # Emoji — single code point:
+    e = "🌍"
+    assert len(e) == 1           # 1 code point
+    assert len(e.encode("utf-8")) == 4   # 4 bytes in UTF-8
+
+    # String with emoji:
+    msg = "hello 🌍"
+    assert len(msg) == 7         # 6 ASCII + 1 emoji
+
+UNICODE NORMALIZATION
+----------------------
+The same visible character can be encoded multiple ways. Always
+normalize before comparing.
+
+    import unicodedata
+
+    # é as a single precomposed code point (NFC):
+    nfc = "\u00e9"          # single char: é
+
+    # é as e + combining accent (NFD):
+    nfd = "e\u0301"         # two chars: e + ́
+
+    assert nfc != nfd                       # different bytes
+    assert len(nfc) == 1
+    assert len(nfd) == 2
+
+    # Normalize before comparing:
+    assert unicodedata.normalize("NFC", nfc) == unicodedata.normalize("NFC", nfd)
+    assert unicodedata.normalize("NFD", nfc) == unicodedata.normalize("NFD", nfd)
+
+    # Normalization forms:
+    # NFC  — canonical composition (most common for storage)
+    # NFD  — canonical decomposition
+    # NFKC — compatibility composition (collapses fullwidth, ligatures)
+    # NFKD — compatibility decomposition
+
+    # NFKC maps fullwidth to ASCII:
+    fullwidth = "Ａ"         # U+FF21 FULLWIDTH LATIN CAPITAL LETTER A
+    assert unicodedata.normalize("NFKC", fullwidth) == "A"
+
+UNICODE CASE FOLDING
+---------------------
+    # upper() / lower() / casefold() for case-insensitive comparison:
+    assert "Ä".lower() == "ä"
+    assert "ß".upper() == "SS"          # German sharp S uppercases to SS
+    assert "ß".casefold() == "ss"       # casefold for comparison
+
+    # Case-insensitive comparison:
+    assert "Straße".casefold() == "strasse"
+    assert "CAFÉ".casefold() == "café"
+
+UNICODE SORTING
+----------------
+    # Default sort is by Unicode code point — may not be alphabetical:
+    words = ["Zebra", "apple", "Banana"]
+    assert sorted(words) == ["Banana", "Zebra", "apple"]  # uppercase first
+
+    # Use locale or casefold for human-expected order:
+    assert sorted(words, key=str.casefold) == ["apple", "Banana", "Zebra"]
+
+RIGHT-TO-LEFT (BIDI) TEXT
+--------------------------
+    arabic = "مرحبا"         # "hello" in Arabic
+    hebrew = "שלום"          # "hello" in Hebrew
+    mixed  = "Hello مرحبا"   # mixed LTR/RTL
+
+    assert len(arabic) == 5
+    assert arabic[::-1] != arabic   # reversed is different
+    assert isinstance(arabic, str)
+
+SURROGATE PAIRS (NARROW BUILDS)
+---------------------------------
+    # In Python 3, strings are wide (UCS-4) — no surrogate issues
+    # But when interfacing with UTF-16 systems:
+    emoji = "\U0001F600"     # 😀 grinning face
+    assert len(emoji) == 1   # 1 code point in Python 3
+
+    # UTF-16 encoding produces a surrogate pair:
+    encoded = emoji.encode("utf-16-be")
+    assert len(encoded) == 4   # 2 surrogates × 2 bytes each
+
+NULL BYTE IN STRING
+-------------------
+    s = "hello\x00world"
+    assert len(s) == 11
+    assert "\x00" in s
+    assert s.split("\x00") == ["hello", "world"]
+
+    # Some C APIs and file systems treat \x00 as string terminator:
+    with pytest.raises(ValueError):
+        open("file\x00name.txt")    # OS rejects null in filename
+
+BOM (BYTE ORDER MARK)
+----------------------
+    bom = "\ufeff"
+    line = "\ufeffFirst line of file"
+
+    # BOM appears when reading files saved with BOM encoding:
+    assert line.startswith("\ufeff")
+    clean = line.lstrip("\ufeff")
+    assert clean == "First line of file"
+
+    # Or use utf-8-sig encoding which strips BOM automatically:
+    # open(path, encoding="utf-8-sig")
+
+PYTEST TEST CASES FOR UNICODE
+-------------------------------
+    import pytest
+    import unicodedata
+
+    @pytest.mark.parametrize("text, expected_len", [
+        ("hello",   5),
+        ("café",    4),
+        ("🌍",      1),
+        ("hello 🌍", 7),
+        ("",        0),
+    ])
+    def test_string_length_unicode(text, expected_len):
+        assert len(text) == expected_len
+
+    @pytest.mark.parametrize("a, b", [
+        ("\u00e9", "e\u0301"),        # é precomposed vs decomposed
+        ("Ａ",     "\uff21"),          # fullwidth A variants
+    ])
+    def test_unicode_normalization(a, b):
+        assert unicodedata.normalize("NFC", a) == unicodedata.normalize("NFC", b)
+
+    @pytest.mark.parametrize("text", [
+        "hello",
+        "café",
+        "こんにちは",
+        "مرحبا",
+        "😀🎉",
+        "\u00e9\u00e0\u00fc",
+    ])
+    def test_encode_decode_roundtrip(text):
+        assert text.encode("utf-8").decode("utf-8") == text
+
+
+----------------------------------------------------------------
+SECTION 4: SPECIAL SYMBOLS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Special symbols include punctuation, control characters, escape
+sequences, HTML/SQL metacharacters, and shell metacharacters.
+They cause injection vulnerabilities, parsing failures, and
+display issues when not handled carefully.
+
+COMMON SPECIAL CHARACTERS TO TEST
+-----------------------------------
+    CHARS = [
+        "!",  "@",  "#",  "$",  "%",  "^",  "&",  "*",
+        "(",  ")",  "-",  "_",  "+",  "=",  "[",  "]",
+        "{",  "}",  "|",  "\\", ":",  ";",  "'",  '"',
+        "<",  ">",  ",",  ".",  "?",  "/",  "~",  "`",
+    ]
+
+    # Each of these can break parsers, queries, or shell commands.
+
+ESCAPE SEQUENCES IN PYTHON STRINGS
+------------------------------------
+    assert "\n" == "\x0a"       # newline
+    assert "\t" == "\x09"       # tab
+    assert "\r" == "\x0d"       # carriage return
+    assert "\\" == "\x5c"       # single backslash
+    assert "\"" == "\x22"       # double quote
+    assert "\'" == "\x27"       # single quote
+    assert "\0" == "\x00"       # null byte
+    assert "\a" == "\x07"       # bell
+    assert "\b" == "\x08"       # backspace
+    assert "\f" == "\x0c"       # form feed
+
+QUOTES INSIDE STRINGS
+----------------------
+    # Single quotes inside double-quoted string:
+    s = "it's fine"
+    assert "'" in s
+
+    # Double quotes inside single-quoted string:
+    s = 'say "hello"'
+    assert '"' in s
+
+    # Both — use triple quotes or escape:
+    s = """it's "complicated" """
+    assert "'" in s and '"' in s
+
+    # Escaped:
+    s = "it\'s \"complicated\""
+    assert s == "it's \"complicated\""
+
+SQL INJECTION CHARACTERS
+------------------------
+    # Never interpolate user input directly into SQL.
+    # These characters are especially dangerous:
+    dangerous = ["'", '"', ";", "--", "/*", "*/", "\\", "%", "_"]
+
+    # Always use parameterized queries:
+    cursor.execute("SELECT * FROM users WHERE name = ?", (user_input,))
+
+    # Test that these characters don't break queries:
+    @pytest.mark.parametrize("name", [
+        "O'Brien",       # single quote
+        'say "hello"',   # double quote
+        "a; DROP TABLE", # semicolon + SQL
+        "100%",          # percent
+        "name--comment", # double dash
+    ])
+    def test_safe_insert_special_chars(name):
+        result = db.insert_user(name)
+        assert result.name == name   # round-trips safely
+
+HTML / XML SPECIAL CHARACTERS
+------------------------------
+    import html
+
+    # Characters that must be escaped in HTML:
+    dangerous_html = '<script>alert("xss")</script>'
+    safe = html.escape(dangerous_html)
+    assert "&lt;" in safe
+    assert "&gt;" in safe
+    assert "&amp;" not in safe or safe   # & escapes to &amp;
+
+    # Unescape:
+    assert html.unescape("&lt;b&gt;") == "<b>"
+    assert html.unescape("&amp;") == "&"
+    assert html.unescape("&quot;") == '"'
+    assert html.unescape("&#39;") == "'"
+
+REGEX SPECIAL CHARACTERS
+-------------------------
+    import re
+
+    # Metacharacters: . ^ $ * + ? { } [ ] | ( ) \
+    # These must be escaped when used as literals:
+    pattern = re.compile(re.escape("hello.world"))
+    assert pattern.search("hello.world")
+    assert not pattern.search("helloxworld")   # dot not matched literally without escape
+
+    # Test that user-supplied patterns don't cause ReDoS:
+    user_pattern = ".*"                        # valid but potentially slow
+    dangerous_pattern = "(a+)+"               # catastrophic backtracking
+
+PATH SEPARATOR CHARACTERS
+--------------------------
+    import os
+
+    # OS-dependent path separator:
+    sep = os.sep   # "/" on Unix, "\\" on Windows
+
+    # pathlib handles separators safely:
+    from pathlib import Path
+    p = Path("dir") / "subdir" / "file.txt"
+    assert p.name == "file.txt"
+    assert p.parent.name == "subdir"
+
+    # Characters illegal in filenames (Windows):
+    illegal_win = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
+
+CONTROL CHARACTERS
+------------------
+    # ASCII control characters: 0x00–0x1F and 0x7F
+    import string
+    assert string.printable   # all printable ASCII
+    assert "\x01" not in string.printable
+    assert "\x1b" not in string.printable   # ESC
+
+    # Strip control characters:
+    def strip_control(s):
+        return "".join(c for c in s if c.isprintable() or c in "\t\n\r")
+
+    assert strip_control("hello\x01world") == "helloworld"
+    assert strip_control("line1\nline2") == "line1\nline2"   # newline kept
+
+PYTEST TEST CASES FOR SPECIAL SYMBOLS
+---------------------------------------
+    import pytest
+
+    @pytest.mark.parametrize("symbol", [
+        "!",  "@",  "#",  "$",  "%",
+        "^",  "&",  "*",  "(",  ")",
+        "-",  "+",  "=",  "[",  "]",
+        "{",  "}",  "|",  ":",  ";",
+        "'",  '"',  "<",  ">",  "?",
+        "/",  "\\", "~",  "`",
+    ])
+    def test_name_field_handles_special_symbol(symbol):
+        name = f"user{symbol}name"
+        result = sanitize_input(name)
+        assert isinstance(result, str)
+
+    @pytest.mark.parametrize("text, expected", [
+        ('<b>hello</b>', '&lt;b&gt;hello&lt;/b&gt;'),
+        ('"quoted"',     '&quot;quoted&quot;'),
+        ("O'Brien",      'O&#x27;Brien'),
+    ])
+    def test_html_escape(text, expected):
+        import html
+        assert html.escape(text, quote=True) == expected
+
+
+----------------------------------------------------------------
+SECTION 5: LONG STRINGS
+----------------------------------------------------------------
+
+OVERVIEW
+--------
+Long strings expose performance issues, truncation bugs, display
+problems, and database or API length limits. Always test at and
+around the maximum allowed length for any string field.
+
+PYTHON STRING MEMORY
+---------------------
+    # Python strings are immutable and stored efficiently.
+    # Very long strings are allowed but use memory.
+
+    short = "a" * 100
+    medium = "a" * 10_000
+    long_s = "a" * 1_000_000
+    very_long = "a" * 10_000_000
+
+    assert len(short) == 100
+    assert len(medium) == 10_000
+    assert len(long_s) == 1_000_000
+    assert len(very_long) == 10_000_000
+
+STRING CONCATENATION PERFORMANCE
+----------------------------------
+    # Repeated += concatenation is O(n²) — avoid in loops:
+    # BAD:
+    result = ""
+    for i in range(10000):
+        result += str(i)    # creates a new string each time
+
+    # GOOD:
+    parts = []
+    for i in range(10000):
+        parts.append(str(i))
+    result = "".join(parts)  # single allocation
+
+    # GOOD (equivalent):
+    result = "".join(str(i) for i in range(10000))
+
+BOUNDARY TESTING FOR LENGTH LIMITS
+------------------------------------
+    MAX_LEN = 255
+
+    def test_max_length_accepted():
+        assert is_valid_input("a" * MAX_LEN) is True
+
+    def test_over_max_length_rejected():
+        assert is_valid_input("a" * (MAX_LEN + 1)) is False
+
+    def test_at_boundary_lengths():
+        assert is_valid_input("a" * (MAX_LEN - 1)) is True
+        assert is_valid_input("a" * MAX_LEN) is True
+        assert is_valid_input("a" * (MAX_LEN + 1)) is False
+
+    @pytest.mark.parametrize("length, valid", [
+        (0,           False),   # empty
+        (1,           True),    # minimum
+        (MAX_LEN - 1, True),    # one below max
+        (MAX_LEN,     True),    # at max
+        (MAX_LEN + 1, False),   # one above max
+        (MAX_LEN * 2, False),   # well over max
+    ])
+    def test_length_boundary(length, valid):
+        assert is_valid_input("a" * length) == valid
+
+DATABASE FIELD LENGTH LIMITS
+------------------------------
+    # Common database column lengths to test around:
+    VARCHAR_50  = 50
+    VARCHAR_100 = 100
+    VARCHAR_255 = 255
+    VARCHAR_512 = 512
+    TEXT_65535  = 65535    # MySQL TEXT type
+
+    def test_username_db_limit():
+        with pytest.raises(DataError):
+            User.create(username="a" * (VARCHAR_50 + 1))
+
+    def test_username_at_max():
+        user = User.create(username="a" * VARCHAR_50)
+        assert len(user.username) == VARCHAR_50
+
+LONG STRINGS WITH SPECIAL CONTENT
+-----------------------------------
+    # Long string of spaces:
+    spaces = " " * 1000
+    assert spaces.strip() == ""
+    assert len(spaces) == 1000
+
+    # Long unicode string:
+    unicode_long = "é" * 10000
+    assert len(unicode_long) == 10000
+    assert len(unicode_long.encode("utf-8")) == 20000  # 2 bytes per é
+
+    # Long string with newlines:
+    lines = "\n".join(["line"] * 1000)
+    assert lines.count("\n") == 999
+    assert len(lines.splitlines()) == 1000
+
+    # Long string mixed with special chars:
+    mixed = ("abc!@#$%^&*()" * 1000)
+    assert len(mixed) == 13000
+
+TRUNCATION BEHAVIOR
+--------------------
+    MAX = 20
+
+    def truncate(s, max_len=MAX):
+        if len(s) <= max_len:
+            return s
+        return s[:max_len - 3] + "..."
+
+    assert truncate("short") == "short"
+    assert truncate("a" * 20) == "a" * 20           # exactly at max
+    assert truncate("a" * 21) == "a" * 17 + "..."   # truncated
+    assert len(truncate("a" * 1000)) == MAX
+
+    # Test truncation with unicode — don't split mid-character:
+    def safe_truncate(s, max_bytes, encoding="utf-8"):
+        encoded = s.encode(encoding)
+        if len(encoded) <= max_bytes:
+            return s
+        truncated = encoded[:max_bytes]
+        return truncated.decode(encoding, errors="ignore")
+
+REGEX ON LONG STRINGS (CATASTROPHIC BACKTRACKING)
+---------------------------------------------------
+    import re
+    import pytest
+
+    # Dangerous pattern — exponential on long input:
+    # pattern = re.compile(r"(a+)+$")
+
+    # Test with timeout or use re2 / regex libraries:
+    # For production, validate length before applying regex:
+    def safe_regex_match(pattern, text, max_len=10000):
+        if len(text) > max_len:
+            raise ValueError(f"Input too long for regex: {len(text)}")
+        return re.match(pattern, text)
+
+    def test_long_string_regex_guard():
+        with pytest.raises(ValueError, match="too long"):
+            safe_regex_match(r"\w+", "a" * 20000)
+
+HASHING LONG STRINGS
+---------------------
+    import hashlib
+
+    long_str = "x" * 10_000_000
+    h = hashlib.sha256(long_str.encode()).hexdigest()
+    assert len(h) == 64     # sha256 always 64 hex chars
+
+PYTEST TEST CASES FOR LONG STRINGS
+------------------------------------
+    import pytest
+
+    MAX_USERNAME = 50
+
+    @pytest.mark.parametrize("length, should_pass", [
+        (1,                True),
+        (MAX_USERNAME,     True),
+        (MAX_USERNAME + 1, False),
+        (1000,             False),
+        (10_000,           False),
+    ])
+    def test_username_length_limit(length, should_pass):
+        username = "a" * length
+        if should_pass:
+            assert create_user(username) is not None
+        else:
+            with pytest.raises(ValueError):
+                create_user(username)
+
+    def test_long_unicode_string():
+        long_unicode = "こんにちは" * 1000   # Japanese, 3 bytes/char in UTF-8
+        assert len(long_unicode) == 5000
+        assert len(long_unicode.encode("utf-8")) == 15000
+
+    def test_long_string_serialization():
+        original = "a" * 100_000
+        serialized = serialize(original)
+        deserialized = deserialize(serialized)
+        assert deserialized == original
+
+    def test_string_of_newlines():
+        s = "\n" * 1000
+        assert s.count("\n") == 1000
+        assert s.strip() == ""
+        assert len(s.splitlines()) == 1000
+
+
+----------------------------------------------------------------
+QUICK REFERENCE CHEAT SHEET
+----------------------------------------------------------------
+
+EMPTY STRING
+    ""          falsy, len==0, is str, is not None
+    "".split()  → []    (no sep)
+    "".split(",") → [""]  (with sep)
+    None != ""
+    always test both None and "" separately
+
+WHITESPACE
+    " " "\t" "\n" "\r\n" are truthy but visually empty
+    "\u00a0" (NBSP) is NOT stripped by strip()
+    strip()   strips ASCII whitespace from both ends
+    casefold is safe for unicode case comparison
+    split() (no args) strips leading/trailing, collapses internal
+
+UNICODE
+    len("café") == 4 (code points), not bytes
+    é = \u00e9 (NFC) OR e + \u0301 (NFD) — normalize before compare
+    unicodedata.normalize("NFC", s) for canonical comparison
+    encode/decode roundtrip: s == s.encode("utf-8").decode("utf-8")
+    BOM \ufeff — use utf-8-sig or strip manually
+    NaN in numeric strings — always validate before int()/float()
+
+SPECIAL SYMBOLS
+    SQL:  parameterize all queries — never interpolate user input
+    HTML: html.escape(s, quote=True) before rendering
+    Regex: re.escape(s) for literal match of user input
+    Path: use pathlib.Path, never string concatenation for paths
+    Control chars: check c.isprintable() to detect hidden chars
+
+LONG STRINGS
+    test at: 0, 1, max-1, max, max+1, max*2
+    += in loop is O(n²) — use "".join() instead
+    unicode long strings: byte length > char length (e.g., 3×for CJK)
+    truncation: decode with errors="ignore" to avoid splitting chars
+    regex: guard max length before applying — catastrophic backtracking
+
+================================================================
+END OF KNOWLEDGE BASE
+================================================================
